@@ -214,7 +214,7 @@ def main():
         else:
             plan = st.selectbox("Selecione o Plano da Equipe", [p['title'] for p in plans])
             sel_plan_id = next(p['id'] for p in plans if p['title'] == plan)
-            p_tasks = get_planner_tasks(sel_plan_id)
+            p_tasks = get_planner_tasks_detailed(sel_plan_id)
             
             for pt in p_tasks:
                 if pt.get('percentComplete', 0) < 100:

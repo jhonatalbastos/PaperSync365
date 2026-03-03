@@ -1,3 +1,10 @@
+import os
+import qrcode
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
 from reportlab.lib.utils import simpleSplit
 
 def draw_wrapped_line(p, text, x, y, max_width, checkbox=True, is_overdue=False):
