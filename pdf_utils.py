@@ -29,14 +29,10 @@ def generate_gtd_page(data):
     qr = qrcode.QRCode(version=1, box_size=10, border=0)
     qr.add_data(data.get('page_id', '0000'))
     qr.make(fit=True)
-    img_qr = qr.make_image(fill_color="black", back_color="white")
+    img_qr = qr.make_image(fill_color="black", back_color="white").convert('RGB')
     
-    # Salva QR Code temporariamente para o reportlab
-    qr_buffer = BytesIO()
-    img_qr.save(qr_buffer, format='PNG')
-    qr_buffer.seek(0)
-    
-    p.drawInlineImage(qr_buffer, width - 3.5*cm, height - 3.5*cm, width=2*cm, height=2*cm)
+    # Desenha o QR Code no PDF
+    p.drawInlineImage(img_qr, width - 3.5*cm, height - 3.5*cm, width=2*cm, height=2*cm)
 
     # --- Cabeçalho ---
     p.setFont("Helvetica-Bold", 18)
