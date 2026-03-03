@@ -131,19 +131,17 @@ def pkce_create_pair():
 
 def get_azure_config():
     azure = st.secrets.get("azure", {})
-    redirect_uri = azure.get("REDIRECT_URI", "")
-    # Remove /callback se estiver presente para evitar erro de mismatch
-    if redirect_uri.endswith("/callback"):
-        redirect_uri = redirect_uri.replace("/callback", "")
-    # Garante que termine com / se for a URL base
-    if not redirect_uri.endswith("/"):
-        redirect_uri += "/"
+    r_uri = azure.get("REDIRECT_URI", "").strip()
+    # Limpeza absoluta da URL para evitar 400 Bad Request
+    if "/callback" in r_uri:
+        r_uri = r_uri.split("/callback")[0]
+    r_uri = r_uri.rstrip("/") + "/"
         
     return (
-        azure.get("CLIENT_ID", ""),
-        azure.get("TENANT_ID", "common"),
-        azure.get("CLIENT_SECRET", ""),
-        redirect_uri,
+        azure.get("CLIENT_ID", "").strip(),
+        azure.get("TENANT_ID", "common").strip(),
+        azure.get("CLIENT_SECRET", "").strip(),
+        r_uri,
     )
 
 def exchange_code_for_token(code, redirect_uri, code_verifier, tenant_id, client_id, client_secret):
@@ -156,9 +154,13 @@ def exchange_code_for_token(code, redirect_uri, code_verifier, tenant_id, client
         "scope": " ".join(SCOPES),
         "code_verifier": code_verifier,
     }
-    if client_secret: data["client_secret"] = client_secret
+    if client_secret: 
+        data["client_secret"] = client_secret
+    
     r = requests.post(token_url, data=data, timeout=30)
-    r.raise_for_status()
+    if r.status_code >= 400:
+        st.error(f"Erro Detalhado da Microsoft: {r.text}")
+        r.raise_for_status()
     return r.json()
 
 def refresh_token(refresh_token_value, tenant_id, client_id, client_secret):
@@ -259,12 +261,19 @@ def main():
                 "scope": " ".join(SCOPES),
                 "state": st.session_state["oauth_state"],
                 "code_challenge": st.session_state["pkce_challenge"],
-                "code_challenge_method": "S256"
+                "code_challenge_method": "S256",
+                "response_mode": "query",
+                "prompt": "select_account"
             }
+            # Garante que a URL não tenha aspas ou caracteres extras que confundam o redirecionamento
             auth_url = f"{AUTH_BASE}/{tenant_id}/oauth2/v2.0/authorize?{urlencode(auth_params)}"
             
             st.link_button("🔌 Conectar Microsoft 365", auth_url, type="primary", use_container_width=True)
-            st.info("Clique no botão acima para autorizar o acesso à sua conta Microsoft.")
+            if st.button("🔄 Limpar Cache de Login"):
+                for k in ["pkce_verifier", "pkce_challenge", "oauth_state", "token"]:
+                    if k in st.session_state: del st.session_state[k]
+                st.rerun()
+            st.info("Clique no botão acima para autorizar o acesso.")
             st.stop()
         
         st.success("Conectado")
