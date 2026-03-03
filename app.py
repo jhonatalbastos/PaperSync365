@@ -325,6 +325,10 @@ def main():
         def render_clarify_form(item_id, item_title, source_type, source_id=None, linked_msg_id=None):
             with st.container(border=True):
                 st.markdown(f"**{item_title}**")
+                if linked_msg_id:
+                    email_url = f"https://outlook.office.com/mail/deeplink/message/{linked_msg_id}"
+                    st.markdown(f"[📧 Abrir E-mail Original]({email_url})")
+                
                 c_ctx, c_prj, c_act = st.columns([1, 1, 0.6])
                 
                 with c_ctx:
