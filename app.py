@@ -227,11 +227,18 @@ def main():
             st.subheader("Prévia da Folha")
             st.write(f"Data: {d['date']}")
             st.write(f"Compromissos: {len(d['calendar'])}")
-            if st.button("🚀 Gerar e Baixar PDF Oficial FECD", type="primary", use_container_width=True):
+            if st.button("🚀 Gerar e Abrir PDF Oficial FECD", type="primary", use_container_width=True):
                 d["page_id"] = f"FECD-{int(time.time())}"
                 save_page_snapshot(d["page_id"], d)
-                pdf = generate_gtd_page(d)
-                st.download_button("⬇️ Salvar Arquivo PDF", pdf, file_name=f"Tarefas_FECD_{d['date'].replace('/','-')}.pdf", use_container_width=True)
+                pdf_buffer = generate_gtd_page(d)
+                pdf_bytes = pdf_buffer.getvalue()
+                
+                # Convert PDF to Base64 for opening in new tab
+                b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+                pdf_display = f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank" style="text-decoration: none;"><div style="background-color: #1d4ed8; color: white; padding: 12px; border-radius: 12px; text-align: center; font-weight: 600; cursor: pointer; margin-bottom: 15px;">📄 CLIQUE AQUI PARA ABRIR E IMPRIMIR</div></a>'
+                
+                st.markdown(pdf_display, unsafe_allow_html=True)
+                st.download_button("⬇️ Salvar uma cópia (Download)", pdf_bytes, file_name=f"Tarefas_FECD_{d['date'].replace('/','-')}.pdf", use_container_width=True)
             if st.button("♻️ Refazer Sincronização"): del st.session_state["pdf_data"]; st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
