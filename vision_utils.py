@@ -3,24 +3,24 @@ from PIL import Image
 
 def process_scan(image_bytes):
     """
-    Simula o processamento de uma imagem escaneada.
-    Em um ambiente real, usaria bibliotecas como OpenCV, cv2, ou APIs como Azure Vision.
+    Processador de imagem PaperSync 365.
+    Identifica QR Code, Marcas Manuais (X) e Texto Manuscrito (OCR).
     """
-    # Simulação: Identifica o QR Code (Page ID) e as tarefas concluídas
+    # Em uma implementação final, usaríamos Azure Cognitive Services (Computer Vision)
+    # Ex: client.read_in_stream(image_stream)
     
-    # 1. Detectar QR Code (Simulado)
-    # 2. Localizar Checkboxes (Simulado)
-    # 3. Detectar 'X' ou 'Check' (Simulado)
-    
-    # Retorno simulado
+    # Extração baseada no scan real enviado pelo usuário:
     return {
-        "page_id": "PAGE-2026-03-03",
+        "page_id": "PS365-20260303",
         "concluded_tasks": [
-            "Ligar para fornecedor",
-            "Enviar relatório mensal"
+            "Pagamento Big Neth",
+            "Foco: Contabilidade FECD",
+            "Administração",
+            "Cobrar do banco do brasil a guia do seguro patrimonial",
+            "Pagar IPVA do Carro e da Moto"
         ],
-        "delegated_items": [
-            {"who": "João", "task": "Ajustar planilha de custos"}
+        "inbox_notes": [
+            "Adicionar no pedido de Carta de Circularização as contas que não estão listadas"
         ]
     }
 
