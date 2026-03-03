@@ -160,12 +160,32 @@ def get_planner_tasks_detailed(token, plan_id):
     for t in tasks: t['bucketName'] = b_map.get(t.get('bucketId'), 'Desconhecido')
     return tasks
 
-def move_todo_task(token, source_list_id, task_id, target_list_id):
-    url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}/move"
+def move_todo_task(token, source_list_id, task_id, target_list_id, title=None):
+    # Estratégia Ultra-Resiliente: Criar no destino e Apagar na origem
+    # Isso evita erros de permissão comuns no endpoint 'move' oficial da MS
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"targetListId": target_list_id}
-    r = requests.post(url, headers=headers, json=payload, timeout=20)
-    return r.status_code in [200, 201, 204]
+    
+    # 1. Busca detalhes da tarefa original (se não tivermos o título)
+    if not title:
+        get_url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}"
+        r_get = requests.get(get_url, headers=headers, timeout=10)
+        if r_get.status_code == 200:
+            title = r_get.json().get('title')
+    
+    if not title: return False
+
+    # 2. Cria a nova tarefa na lista de destino
+    url_create = f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks"
+    payload_create = {"title": title}
+    r_create = requests.post(url_create, headers=headers, json=payload_create, timeout=20)
+    
+    if r_create.status_code in [200, 201]:
+        # 3. Se criou com sucesso, apaga a original da Inbox
+        url_del = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}"
+        requests.delete(url_del, headers=headers, timeout=15)
+        return True
+        
+    return False
 
 def create_planner_task_detailed(token, plan_id, bucket_id, title):
     url = f"{GRAPH_BASE}/planner/tasks"
@@ -273,7 +293,11 @@ def main():
 
     token = get_access_token()
     all_lists = get_todo_lists(token)
-    inbox_list_id = next((l['id'] for l in all_lists if l['displayName'] == "Tasks" or l['wellknownListName'] == "defaultList"), None)
+    
+    # Identificação da Inbox Principal (Suporte a PT-BR 'Tarefas' e 'Tasks')
+    inbox_list_id = next((l['id'] for l in all_lists if l['wellknownListName'] == "defaultList"), None)
+    if not inbox_list_id:
+        inbox_list_id = next((l['id'] for l in all_lists if l['displayName'].lower() in ["tasks", "tarefas"]), None)
     
     # Mapeamento robusto (ignora maiúsculas/minúsculas e espaços extras)
     gtd_map = {}
@@ -326,7 +350,8 @@ def main():
             with st.container(border=True):
                 st.markdown(f"**{item_title}**")
                 if linked_msg_id:
-                    email_url = f"https://outlook.office.com/mail/deeplink/message/{linked_msg_id}"
+                    # Formato moderno de ID que evita travamento na tela "Carregando"
+                    email_url = f"https://outlook.office.com/mail/id/{linked_msg_id}"
                     st.markdown(f"[📧 Abrir E-mail Original]({email_url})")
                 
                 c_ctx, c_prj, c_act = st.columns([1, 1, 0.6])
@@ -335,23 +360,26 @@ def main():
                     target_ctx = st.selectbox("Mover p/ Contexto", ["-- Selecionar --"] + GTD_CONTEXT_LISTS, key=f"ctx_{source_type}_{item_id}")
                     if target_ctx != "-- Selecionar --":
                         if st.button("Confirmar Contexto", key=f"btn_ctx_{source_type}_{item_id}", type="primary"):
-                            st.toast(f"Movendo para {target_ctx}...")
                             target_id = gtd_map.get(target_ctx)
-                            if target_id:
-                                success = False
-                                if source_type in ["todo", "email"]:
-                                    if move_todo_task(token, source_id, item_id, target_id):
-                                        if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Ações")
-                                        success = True
-                                elif source_type == "paper":
-                                    graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title})
+                            if not target_id:
+                                st.error(f"❌ Erro: Lista '{target_ctx}' não encontrada no seu To Do. Crie-a ou tente sincronizar.")
+                                return
+                                
+                            st.toast(f"🔄 Movendo: {item_title}...")
+                            success = False
+                            if source_type in ["todo", "email"]:
+                                if move_todo_task(token, source_id, item_id, target_id, title=item_title):
+                                    if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Ações")
+                                    success = True
+                            elif source_type == "paper":
+                                if graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title}):
                                     mark_note_as_processed(item_title)
                                     success = True
-                                
-                                if success:
-                                    st.success("Item movido com sucesso!"); st.cache_data.clear(); st.rerun()
-                                else:
-                                    st.error("Erro ao mover item. Verifique sua conexão.")
+                            
+                            if success:
+                                st.success("🚀 Item processador com sucesso!"); st.cache_data.clear(); st.rerun()
+                            else:
+                                st.error("⚠️ Falha na API da Microsoft. Tente novamente em alguns instantes.")
 
                 with c_prj:
                     p_opts = ["-- Selecionar Projeto --", "🆕 + Criar Novo Projeto"] + [p['title'] for p in plans]
