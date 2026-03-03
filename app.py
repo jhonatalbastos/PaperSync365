@@ -331,47 +331,52 @@ def main():
                         ts = get_tasks(token, ctx_id)
                         tasks_raw[ctx_n] = [{"title": t['title'], "selected": True} for t in ts if t['status'] != 'completed']
 
-                    # Buscar Planner (Delegadas) com Priorização Inteligente
+                    # Buscar Planner (Delegadas e Projetos) com Regras GTD
                     plans = get_planner_plans(token)
-                    planner_raw = []
-                    today_str = date.today().isoformat()
+                    planner_raw = [] # Para Delegação
+                    tasks_raw["💡 PROJETOS (Planner)"] = [] # Novo contexto para ações de projetos
                     
+                    today_str = date.today().isoformat()
                     temp_planner = []
+
                     if plans:
                         for p in plans:
                             pts = get_planner_tasks_detailed(token, p['id'])
                             for pt in pts:
                                 if pt.get('percentComplete', 0) < 100:
+                                    b_name = pt.get('bucketName', '').lower()
+                                    
+                                    # Pula tudo que for Backlog (Planejamento futuro)
+                                    if "backlog" in b_name: continue
+                                    
                                     due_val = pt.get('dueDateTime')
-                                    is_overdue = False
-                                    is_today = False
+                                    is_overdue = (due_val[:10] < today_str) if due_val else False
+                                    is_today = (due_val[:10] == today_str) if due_val else False
                                     
-                                    if due_val:
-                                        due_date_only = due_val[:10]
-                                        if due_date_only < today_str:
-                                            is_overdue = True
-                                        elif due_date_only == today_str:
-                                            is_today = True
-                                    
-                                    temp_planner.append({
+                                    item_data = {
                                         "title": pt['title'],
                                         "plan": p['title'],
                                         "bucket": pt.get('bucketName', 'Geral'),
-                                        "selected": False, # Será definido após ordenação
+                                        "selected": False,
                                         "id": pt['id'],
                                         "overdue": is_overdue,
                                         "today": is_today,
                                         "due": due_val or "9999-12-31"
-                                    })
+                                    }
+
+                                    # Regra de Destino baseada no Bucket
+                                    if "proxima" in b_name or "próxima" in b_name or "acao" in b_name or "ação" in b_name:
+                                        # Vai para Próximas Ações do papel
+                                        item_data['selected'] = True # Próximas ações tendem a ser foco imediato
+                                        tasks_raw["💡 PROJETOS (Planner)"].append(item_data)
+                                    elif "delegado" in b_name or "aguardando" in b_name:
+                                        # Vai para Radar de Delegação
+                                        temp_planner.append(item_data)
                     
-                    # Ordenação: Hoje primeiro, depois Atrasadas, depois o resto por data
-                    # (False, False) vem antes de (True, True) em booleano, então usamos -int
+                    # Priorização e Seleção automática para Delegação (Radar)
                     temp_planner.sort(key=lambda x: (-int(x['today']), -int(x['overdue']), x['due']))
-                    
-                    # Selecionar as 5 primeiras por padrão
                     for idx, item in enumerate(temp_planner):
-                        if idx < 5:
-                            item['selected'] = True
+                        if idx < 5: item['selected'] = True
                         planner_raw.append(item)
 
                     st.session_state.sync_data = {
@@ -410,7 +415,20 @@ def main():
 
                 if st.form_submit_button("🚀 Confirmar e Gerar PDF"):
                     final_cal = [e for e in sd['calendar'] if e['selected']]
-                    final_tasks = {c: [t for t in tl if t['selected']] for c, tl in sd['tasks'].items()}
+                    
+                    # Processar tarefas (To Do + Projetos Planner)
+                    final_tasks = {}
+                    for ctx, tl in sd['tasks'].items():
+                        selected_for_ctx = []
+                        for t in tl:
+                            if t.get('selected'):
+                                # Se for do Planner, anexa o nome do projeto ao título
+                                title = t['title']
+                                if "plan" in t: title = f"{title} [{t['plan']}]"
+                                selected_for_ctx.append({"title": title})
+                        if selected_for_ctx:
+                            final_tasks[ctx] = selected_for_ctx
+                    
                     final_waiting = []
                     if sd.get('planner'):
                         for pk in sd['planner']:
