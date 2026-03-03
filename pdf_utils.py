@@ -169,16 +169,19 @@ def generate_gtd_page(data):
     template_path = os.path.join(os.path.dirname(__file__), "assets", "template_fecd.pdf")
     if os.path.exists(template_path):
         overlay_pdf = PdfReader(temp_buffer)
-        template_pdf = PdfReader(template_path)
         output = PdfWriter()
+        
         for page_ovl in overlay_pdf.pages:
-            new_page = PdfWriter().add_page(template_pdf.pages[0]) # Começa com timbrado
-            # Nota: PdfWriter.add_page retorna a página adicionada. 
-            # Mas pypdf PdfWriter não funciona exatamente assim para merge.
-            # Vamos usar o método correto:
-            output_page = template_pdf.pages[0]
-            output_page.merge_page(page_ovl)
-            output.add_page(output_page)
+            # Recarregar o template para cada página para garantir que são cópias limpas
+            template_pdf = PdfReader(template_path)
+            bg_page = template_pdf.pages[0]
+            bg_page.merge_page(page_ovl)
+            output.add_page(bg_page)
+        
+        final_buffer = BytesIO()
+        output.write(final_buffer)
+        final_buffer.seek(0)
+        return final_buffer
         
         final_buffer = BytesIO()
         output.write(final_buffer)
