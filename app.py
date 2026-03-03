@@ -292,21 +292,48 @@ def main():
                         ts = get_tasks(token, ctx_id)
                         tasks_raw[ctx_n] = [{"title": t['title'], "selected": True} for t in ts if t['status'] != 'completed']
 
-                    # Buscar Planner (Delegadas)
+                    # Buscar Planner (Delegadas) com Priorização Inteligente
                     plans = get_planner_plans(token)
                     planner_raw = []
+                    today_str = date.today().isoformat()
+                    
+                    temp_planner = []
                     if plans:
                         for p in plans:
                             pts = get_planner_tasks_detailed(token, p['id'])
                             for pt in pts:
                                 if pt.get('percentComplete', 0) < 100:
-                                    planner_raw.append({
+                                    due_val = pt.get('dueDateTime')
+                                    is_overdue = False
+                                    is_today = False
+                                    
+                                    if due_val:
+                                        due_date_only = due_val[:10]
+                                        if due_date_only < today_str:
+                                            is_overdue = True
+                                        elif due_date_only == today_str:
+                                            is_today = True
+                                    
+                                    temp_planner.append({
                                         "title": pt['title'],
                                         "plan": p['title'],
                                         "bucket": pt.get('bucketName', 'Geral'),
-                                        "selected": True,
-                                        "id": pt['id']
+                                        "selected": False, # Será definido após ordenação
+                                        "id": pt['id'],
+                                        "overdue": is_overdue,
+                                        "today": is_today,
+                                        "due": due_val or "9999-12-31"
                                     })
+                    
+                    # Ordenação: Hoje primeiro, depois Atrasadas, depois o resto por data
+                    # (False, False) vem antes de (True, True) em booleano, então usamos -int
+                    temp_planner.sort(key=lambda x: (-int(x['today']), -int(x['overdue']), x['due']))
+                    
+                    # Selecionar as 5 primeiras por padrão
+                    for idx, item in enumerate(temp_planner):
+                        if idx < 5:
+                            item['selected'] = True
+                        planner_raw.append(item)
 
                     st.session_state.sync_data = {
                         "calendar": [{"subject": e['subject'], "time": e['start']['dateTime'][11:16], "selected": True} for e in evs],
@@ -335,7 +362,10 @@ def main():
                 st.markdown("#### 🤝 Radar de Delegação (Planner)")
                 if sd.get('planner'):
                     for k, pk in enumerate(sd['planner']):
-                        pk['selected'] = st.checkbox(f"{pk['title']} ({pk['plan']})", value=pk['selected'], key=f"f_pk_{k}")
+                        label = pk['title']
+                        if pk['today']: label = f"⭐ {label} (HOJE)"
+                        elif pk['overdue']: label = f"🔴 {label} (ATRASADO)"
+                        pk['selected'] = st.checkbox(f"{label} @ {pk['plan']}", value=pk['selected'], key=f"f_pk_{k}")
                 else:
                     st.write("Nenhuma tarefa delegada ativa.")
 
@@ -349,7 +379,8 @@ def main():
                                 final_waiting.append({
                                     "task": pk['title'],
                                     "plan": pk['plan'],
-                                    "bucket": pk['bucket']
+                                    "bucket": pk['bucket'],
+                                    "overdue": pk['overdue']
                                 })
                     
                     st.session_state.final_gtd_data = {
