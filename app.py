@@ -255,9 +255,9 @@ def main():
                     data_pdf = {
                         "date": date.today().strftime("%d/%m/%Y"),
                         "page_id": f"PS365-{int(time.time())}",
-                        "calendar": [f"{e['start']['dateTime'][11:16]} - {e['subject']}" for e in events],
-                        "contexts": context_tasks,
-                        "delegations": delegations
+                        "calendar": [{"time": e['start']['dateTime'][11:16], "subject": e['subject']} for e in events],
+                        "tasks": context_tasks,
+                        "waiting": [{"who": "Equipe", "task": "Aguardando retorno"}] # Exemplo inicial
                     }
                     
                     save_page_snapshot(data_pdf["page_id"], data_pdf)
