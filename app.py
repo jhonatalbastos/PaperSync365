@@ -108,8 +108,16 @@ def get_planner_plans():
     # Tenta buscar planos do usuário
     return graph_request("GET", "/me/planner/plans").get("value", [])
 
-def get_planner_tasks(plan_id):
-    return graph_request("GET", f"/planner/plans/{plan_id}/tasks").get("value", [])
+def get_planner_buckets(plan_id):
+    return graph_request("GET", f"/planner/plans/{plan_id}/buckets").get("value", [])
+
+def get_planner_tasks_detailed(plan_id):
+    tasks = graph_request("GET", f"/planner/plans/{plan_id}/tasks").get("value", [])
+    buckets = get_planner_buckets(plan_id)
+    b_map = {b['id']: b['name'] for b in buckets}
+    for t in tasks:
+        t['bucketName'] = b_map.get(t.get('bucketId'), 'Desconhecido')
+    return tasks
 
 def complete_task(list_id, task_id):
     return graph_request("PATCH", f"/me/todo/lists/{list_id}/tasks/{task_id}", payload={"status": "completed"})
@@ -227,49 +235,121 @@ def main():
                         </div>
                     """, unsafe_allow_html=True)
 
-    # --- TAB: PAPERSYNC ---
+    # --- TAB: PAPERSYNC (WIZARD) ---
     with tab_paper:
-        st.subheader("🖨️ Sincronização Inteligente")
-        pcol1, pcol2 = st.columns(2)
-        with pcol1:
-            if st.button("📄 Gerar e Salvar Snapshot", type="primary"):
-                with st.spinner("Coletando seus dados do Microsoft 365..."):
-                    # 1. Coletar Calendário
+        st.subheader("🖨️ Assistente de Impressão GTD")
+        
+        if "pdf_prep_data" not in st.session_state:
+            if st.button("🔍 Iniciar Coleta de Dados para o Papel", type="primary"):
+                with st.spinner("Lendo seus sistemas..."):
+                    # 1. Calendário
                     events = graph_request("GET", "/me/calendarView", params={
                         "startDateTime": datetime.now().isoformat(),
-                        "endDateTime": (datetime.now() + timedelta(days=1)).isoformat()
+                        "endDateTime": (datetime.now() + timedelta(days=1)).isoformat(),
+                        "$orderby": "start/dateTime"
                     }).get("value", [])
                     
-                    # 2. Coletar Tarefas por Contexto
+                    # 2. To Do (Priorizado por data ou atraso)
                     context_tasks = {}
                     for ctx_name in GTD_CONTEXT_LISTS:
                         if ctx_name in gtd_map:
-                            tasks = get_tasks(gtd_map[ctx_name])
-                            active = [t['title'] for t in tasks if t['status'] != 'completed'][:5]
-                            if active: context_tasks[ctx_name] = active
-                    
-                    # 3. Coletar Delegação (do último plano selecionado se houver)
-                    delegations = []
-                    # (Lógica simplificada para o PDF inicial)
+                            t_list = get_tasks(gtd_map[ctx_name])
+                            prepared = []
+                            for t in t_list:
+                                if t['status'] != 'completed':
+                                    due = t.get('dueDateTime', {}).get('dateTime')
+                                    is_overdue = False
+                                    if due:
+                                        due_dt = datetime.fromisoformat(due[:19])
+                                        if due_dt < datetime.now(): is_overdue = True
+                                    prepared.append({"title": t['title'], "overdue": is_overdue})
+                            # Ordena: Atrasados primeiro
+                            prepared.sort(key=lambda x: x['overdue'], reverse=True)
+                            if prepared: context_tasks[ctx_name] = prepared[:6]
 
-                    data_pdf = {
+                    # 3. Planner
+                    waiting = []
+                    plans = get_planner_plans()
+                    if plans:
+                        # Pega tarefas do primeiro plano ou um plano 'PaperSync' se existir
+                        target_plan = plans[0]
+                        p_tasks = get_planner_tasks_detailed(target_plan['id'])
+                        for pt in p_tasks:
+                            if pt.get('percentComplete', 0) < 100:
+                                waiting.append({
+                                    "task": pt['title'],
+                                    "plan": target_plan['title'],
+                                    "bucket": pt.get('bucketName', '')
+                                })
+                    
+                    st.session_state["pdf_prep_data"] = {
                         "date": date.today().strftime("%d/%m/%Y"),
-                        "page_id": f"PS365-{int(time.time())}",
                         "calendar": [{"time": e['start']['dateTime'][11:16], "subject": e['subject']} for e in events],
                         "tasks": context_tasks,
-                        "waiting": [{"who": "Equipe", "task": "Aguardando retorno"}] # Exemplo inicial
+                        "waiting": waiting[:5]
                     }
-                    
-                    save_page_snapshot(data_pdf["page_id"], data_pdf)
-                    pdf_bytes = generate_gtd_page(data_pdf)
-                    st.download_button("⬇️ Baixar PDF Preenchido", pdf_bytes, file_name=f"PaperSync_{data_pdf['page_id']}.pdf")
-                    st.success("PDF gerado com seus dados reais!")
-        with pcol2:
-            up = st.file_uploader("Upload do Scan")
-            if up:
+                    st.rerun()
+        else:
+            # TELA DE REVISÃO
+            data = st.session_state["pdf_prep_data"]
+            st.info("💡 Revise os itens abaixo antes de gerar o PDF. Você pode remover linhas que não quer no papel.")
+            
+            col_rev1, col_rev2 = st.columns(2)
+            with col_rev1:
+                st.write("**📅 Calendário**")
+                for i, ev in enumerate(data['calendar']):
+                    if st.checkbox(f"{ev['time']} - {ev['subject']}", value=True, key=f"rev_ev_{i}"):
+                        pass
+                    else: ev['remove'] = True
+            
+            with col_rev2:
+                st.write("**📡 Delegação**")
+                for i, wt in enumerate(data['waiting']):
+                    if st.checkbox(f"{wt['task']} ({wt['bucket']})", value=True, key=f"rev_wt_{i}"):
+                        pass
+                    else: wt['remove'] = True
+            
+            st.write("**⚡ Próximas Ações**")
+            for ctx, tasks in data['tasks'].items():
+                st.markdown(f"_{ctx}_")
+                for i, t in enumerate(tasks):
+                    label = f"{'🚩 ' if t['overdue'] else ''}{t['title']}"
+                    if st.checkbox(label, value=True, key=f"rev_tk_{ctx}_{i}"):
+                        pass
+                    else: t['remove'] = True
+
+            if st.button("🚀 Gerar PDF com os itens selecionados"):
+                # Filtra removidos
+                final_cal = [e for e in data['calendar'] if not e.get('remove')]
+                final_waiting = [w for w in data['waiting'] if not w.get('remove')]
+                final_tasks = {}
+                for ctx, tks in data['tasks'].items():
+                    final_tasks[ctx] = [t for t in tks if not t.get('remove')]
+                
+                final_data = {
+                    "date": data['date'],
+                    "page_id": f"PS365-{int(time.time())}",
+                    "calendar": final_cal,
+                    "tasks": final_tasks,
+                    "waiting": final_waiting
+                }
+                
+                save_page_snapshot(final_data["page_id"], final_data)
+                pdf_bytes = generate_gtd_page(final_data)
+                st.download_button("⬇️ BAIXAR PDF FINAL", pdf_bytes, file_name=f"PaperSync_{final_data['page_id']}.pdf")
+                
+            if st.button("🗑️ Resetar Wizard"):
+                del st.session_state["pdf_prep_data"]
+                st.rerun()
+
+        st.divider()
+        st.subheader("📥 Processar Scan")
+        up = st.file_uploader("Upload do Scan (Foto do Papel)", type=['png', 'jpg', 'jpeg'])
+        if up:
+            with st.spinner("Analisando marcas..."):
                 res = process_scan(up.read())
-                st.success(f"Lido: {res['page_id']}")
-                for t in res['concluded_tasks']: st.write(f"✅ {t}")
+                st.success(f"Página identificada: {res['page_id']}")
+                for t in res['concluded_tasks']: st.write(f"✅ Concluindo: {t}")
 
 # Auth Callback
 if __name__ == "__main__":
