@@ -160,6 +160,26 @@ def get_planner_tasks_detailed(token, plan_id):
     for t in tasks: t['bucketName'] = b_map.get(t.get('bucketId'), 'Desconhecido')
     return tasks
 
+def move_todo_task(token, source_list_id, task_id, target_list_id):
+    url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}/move"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"targetListId": target_list_id}
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    return r.status_code == 200
+
+def create_planner_task(token, plan_id, bucket_id, title):
+    url = f"{GRAPH_BASE}/planner/tasks"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"planId": plan_id, "bucketId": bucket_id, "title": title}
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    return r.status_code == 201
+
+def delete_todo_task(token, list_id, task_id):
+    url = f"{GRAPH_BASE}/me/todo/lists/{list_id}/tasks/{task_id}"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.delete(url, headers=headers, timeout=20)
+    return r.status_code == 204
+
 def complete_task(list_id, task_id):
     return graph_request("PATCH", f"/me/todo/lists/{list_id}/tasks/{task_id}", payload={"status": "completed"})
 
@@ -238,43 +258,72 @@ def main():
 
     elif selection == "🧠 Central de Esclarecer":
         st.title("🧠 Esclarecer (Capturas)")
-        st.write("Processe itens da Inbox, E-mails sinalizados e Notas de Papel.")
+        st.write("Decida o destino de cada captura: Contexto (To Do) ou Projeto (Planner).")
         
         t_inbox, t_paper, t_email = st.tabs(["📥 Inbox To Do", "📝 Notas de Papel", "📧 E-mails com Flag"])
+        plans = get_planner_plans(token)
         
+        # Função auxiliar para renderizar o formulário de esclarecimento
+        def render_clarify_form(item_id, item_title, source_type, source_id=None):
+            with st.container(border=True):
+                st.markdown(f"**{item_title}**")
+                c1, c2, c3 = st.columns([1, 1, 0.5])
+                
+                with c1:
+                    target_ctx = st.selectbox("Mover p/ Contexto", ["-- Selecionar --"] + GTD_CONTEXT_LISTS, key=f"ctx_{source_type}_{item_id}")
+                    if target_ctx != "-- Selecionar --":
+                        if st.button("Confirmar Contexto", key=f"btn_ctx_{source_type}_{item_id}"):
+                            target_id = gtd_map.get(target_ctx)
+                            if source_type == "todo" and target_id:
+                                if move_todo_task(token, source_id, item_id, target_id):
+                                    st.success("Movido!"); st.cache_data.clear(); st.rerun()
+                            elif (source_type == "paper" or source_type == "email") and target_id:
+                                # Criar nova tarefa no To Do e remover origem
+                                graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title})
+                                if source_type == "paper": mark_note_as_processed(item_title)
+                                st.success("Encaminhado!"); st.cache_data.clear(); st.rerun()
+
+                with c2:
+                    if plans:
+                        p_opts = ["-- Selecionar Projeto --"] + [p['title'] for p in plans]
+                        target_proj = st.selectbox("Transformar em Projeto", p_opts, key=f"prj_{source_type}_{item_id}")
+                        if target_proj != "-- Selecionar Projeto --":
+                            p_sel = next(p for p in plans if p['title'] == target_proj)
+                            buckets = get_planner_buckets(token, p_sel['id'])
+                            b_opts = {b['name']: b['id'] for b in buckets}
+                            target_b = st.selectbox("Bucket", list(b_opts.keys()), key=f"bkt_{source_type}_{item_id}")
+                            if st.button("Criar no Planner", key=f"btn_prj_{source_type}_{item_id}"):
+                                if create_planner_task(token, p_sel['id'], b_opts[target_b], item_title):
+                                    if source_type == "todo": delete_todo_task(token, source_id, item_id)
+                                    if source_type == "paper": mark_note_as_processed(item_title)
+                                    st.success("Projeto Atualizado!"); st.cache_data.clear(); st.rerun()
+
+                with c3:
+                    st.write("") # Espaçador
+                    if st.button("✓ Feito", key=f"done_{source_type}_{item_id}", use_container_width=True):
+                        if source_type == "todo": complete_task(source_id, item_id)
+                        if source_type == "paper": mark_note_as_processed(item_title)
+                        st.cache_data.clear(); st.rerun()
+
         with t_inbox:
-            # inbox_list_id is needed here
-            all_lists = get_todo_lists(token)
-            inbox_list_id = next((l['id'] for l in all_lists if l['displayName'] == "Tasks" or l['wellknownListName'] == "defaultList"), None)
             if inbox_list_id:
                 inbox_tasks = get_tasks(token, inbox_list_id)
-                for it in inbox_tasks:
-                    if it['status'] != 'completed':
-                        with st.container(border=True):
-                            st.write(it['title'])
-                            b1, b2, b3 = st.columns(3)
-                            if b1.button("✓ Feito", key=f"inb_{it['id']}"): 
-                                complete_task(inbox_list_id, it['id'])
-                                st.cache_data.clear() # Limpa cache para refletir a conclusão
-                                st.rerun()
-                            b2.button("📅 Agendar", key=f"inba_{it['id']}")
-                            b3.button("🤝 Delegar", key=f"inbd_{it['id']}")
+                pending_inbox = [t for t in inbox_tasks if t['status'] != 'completed']
+                if not pending_inbox: st.success("Inbox limpa! Bom trabalho.")
+                for it in pending_inbox:
+                    render_clarify_form(it['id'], it['title'], "todo", inbox_list_id)
         
         with t_paper:
             paper_notes = get_unprocessed_inbox_notes()
-            if not paper_notes: st.info("Nenhuma nota manuscrita processada recentemente.")
+            if not paper_notes: st.info("Sem notas de papel pendentes.")
             for pn in paper_notes:
-                with st.container(border=True):
-                    st.write(pn['text'])
-                    if st.button("✓ Processado", key=f"pnb_{pn['text']}"): mark_note_as_processed(pn['text']); st.rerun()
+                render_clarify_form(hashlib.md5(pn['text'].encode()).hexdigest(), pn['text'], "paper")
         
         with t_email:
             emails = get_flagged_emails(token)
+            if not emails: st.info("Sem e-mails sinalizados.")
             for eml in emails:
-                with st.container(border=True):
-                    st.markdown(f"**{eml['subject']}**")
-                    st.caption(f"De: {eml['from']['emailAddress']['name']}")
-                    st.button("✓ Resolver E-mail", key=f"emlv_{eml['id']}")
+                render_clarify_form(eml['id'], eml['subject'], "email")
 
     elif selection == "🤝 Projetos e Delegação":
         st.title("🤝 Gestão de Projetos e Delegação")
