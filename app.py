@@ -184,7 +184,7 @@ def main():
     with st.sidebar:
         if os.path.exists(logo_path): st.image(logo_path, use_container_width=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        selection = st.radio("Menu de Navegação", ["📊 Dashboard Completo", "🧠 Central de Esclarecer", "🤝 Radar de Delegação", "🖨️ Assistente de Impressão", "📤 Upload de Scan"], label_visibility="collapsed")
+        selection = st.radio("Menu de Navegação", ["📊 Dashboard Completo", "🧠 Central de Esclarecer", "🤝 Projetos e Delegação", "🖨️ Assistente de Impressão", "📤 Upload de Scan"], label_visibility="collapsed")
         st.divider()
         if st.button("🚪 Sair", use_container_width=True):
             del st.session_state["token"]; st.rerun()
@@ -264,18 +264,45 @@ def main():
                     st.caption(f"De: {eml['from']['emailAddress']['name']}")
                     st.button("✓ Resolver E-mail", key=f"emlv_{eml['id']}")
 
-    elif selection == "🤝 Radar de Delegação":
-        st.title("🤝 Radar de Delegação (Planner)")
+    elif selection == "🤝 Projetos e Delegação":
+        st.title("🤝 Gestão de Projetos e Delegação")
+        st.write("Acompanhe o progresso dos seus projetos no Planner e o status das delegações.")
+        
         plans = get_planner_plans(token)
-        if not plans: st.warning("Nenhum plano encontrado no Planner.")
+        if not plans: st.warning("Nenhum projeto encontrado no Planner.")
         else:
-            p_name = st.selectbox("Escolha o Plano do Projeto", [p['title'] for p in plans])
-            p_id = next(p['id'] for p in plans if p['title'] == p_name)
-            p_tasks = get_planner_tasks_detailed(token, p_id)
-            for pt in p_tasks:
-                if pt.get('percentComplete', 0) < 100:
-                    badge = "pill-urgent" if pt.get('dueDateTime') and datetime.fromisoformat(pt['dueDateTime'][:19]) < datetime.now() else "pill-normal"
-                    st.markdown(f'<div class="fecd-card"><span class="status-pill {badge}">{pt["bucketName"]}</span><h4 style="margin-top:10px;">{pt["title"]}</h4></div>', unsafe_allow_html=True)
+            # Seleção de Projeto com Progresso
+            p_names = [p['title'] for p in plans]
+            p_name = st.selectbox("Selecione o Projeto para Detalhamento", p_names)
+            p_selected = next(p for p in plans if p['title'] == p_name)
+            
+            p_tasks = get_planner_tasks_detailed(token, p_selected['id'])
+            
+            # Cálculo de Progresso
+            total = len(p_tasks)
+            concluidas = sum(1 for t in p_tasks if t.get('percentComplete', 0) == 100)
+            progresso = (concluidas / total) if total > 0 else 0
+            
+            st.markdown(f"### {p_name}")
+            st.progress(progresso, text=f"Progresso do Projeto: {int(progresso*100)}% ({concluidas}/{total} tarefas)")
+            
+            col_todo, col_waiting = st.columns(2)
+            
+            with col_todo:
+                st.subheader("📝 Próximas Ações do Projeto")
+                pending = [t for t in p_tasks if t.get('percentComplete', 0) < 100]
+                if not pending: st.success("Nenhuma ação pendente neste projeto!")
+                for pt in pending:
+                    badge = "pill-urgent" if pt.get('dueDateTime') and pt['dueDateTime'][:10] < date.today().isoformat() else "pill-normal"
+                    st.markdown(f'<div class="fecd-card"><span class="status-pill {badge}">{pt["bucketName"]}</span><h4 style="margin-top:10px; font-size:14px;">{pt["title"]}</h4></div>', unsafe_allow_html=True)
+
+            with col_waiting:
+                st.subheader("🤝 Status de Delegação")
+                # Filtra tarefas que estão em buckets que indicam delegação ou tem responsáveis
+                waiting = [t for t in p_tasks if "Aguardando" in t.get('bucketName', '') or "Delegado" in t.get('bucketName', '')]
+                if not waiting: st.info("Nenhuma tarefa marcada especificamente como delegação.")
+                for wt in waiting:
+                    st.markdown(f'<div class="fecd-card" style="border-left: 4px solid #f59e0b;"><h4 style="font-size:14px;">{wt["title"]}</h4><small>{wt["bucketName"]}</small></div>', unsafe_allow_html=True)
 
     elif selection == "🖨️ Assistente de Impressão":
         st.title("🖨️ Gerador de Folha GTD")
