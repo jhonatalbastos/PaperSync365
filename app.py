@@ -161,24 +161,45 @@ def get_planner_tasks_detailed(token, plan_id):
     return tasks
 
 def move_todo_task(token, source_list_id, task_id, target_list_id, title=None):
-    # Restaura o endpoint oficial 'move' que preserva ANEXOS e METADADOS
-    url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}/move"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"targetListId": target_list_id}
     
-    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    # 1. Busca os metadados e recursos vinculados (ANEXOS DE E-MAIL)
+    get_url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}?$expand=linkedResources"
+    r_get = requests.get(get_url, headers=headers, timeout=10)
+    task_data = r_get.json() if r_get.status_code == 200 else {}
     
-    # Se o move oficial funcionar, excelente (preserva tudo)
-    if r.status_code in [200, 201, 204]: return True
+    if not title: title = task_data.get('title')
+    linked_resources = task_data.get('linkedResources', [])
+
+    # 2. Preferimos criar uma nova tarefa com os mesmos recursos para garantir preservação
+    # O endpoint /move da MS falha em preservar anexos de e-mail sinalizado.
+    url_create = f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks"
+    payload_create = {"title": title}
     
-    # Plano C: Se falhar (ex: e-mail sinalizado não aceita move), cria nova e apaga anterior (aviso: perde anexos)
-    if title:
-        url_create = f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks"
-        r_c = requests.post(url_create, headers=headers, json={"title": title}, timeout=20)
-        if r_c.status_code in [200, 201]:
-            delete_todo_task(token, source_list_id, task_id)
-            return True
-            
+    # Preserva nota e outros campos básicos
+    if task_data.get('body'): payload_create['body'] = task_data['body']
+    if task_data.get('importance'): payload_create['importance'] = task_data['importance']
+    
+    r_create = requests.post(url_create, headers=headers, json=payload_create, timeout=20)
+    
+    if r_create.status_code in [200, 201]:
+        new_task_id = r_create.json()['id']
+        
+        # 3. REPLICA OS ANEXOS/LINKS DE E-MAIL (O "Vínculo Sagrado")
+        for res in linked_resources:
+            res_payload = {
+                "webUrl": res.get('webUrl'),
+                "applicationName": res.get('applicationName'),
+                "displayName": res.get('displayName'),
+                "externalId": res.get('externalId')
+            }
+            requests.post(f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks/{new_task_id}/linkedResources", 
+                          headers=headers, json=res_payload, timeout=10)
+        
+        # 4. Apaga a original
+        requests.delete(f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}", headers=headers, timeout=15)
+        return True
+        
     return False
 
 def create_planner_task_detailed(token, plan_id, bucket_id, title):
