@@ -186,13 +186,25 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         selection = st.radio("Menu de Navegação", ["📊 Dashboard Completo", "🧠 Central de Esclarecer", "🤝 Projetos e Delegação", "🖨️ Assistente de Impressão", "📤 Upload de Scan"], label_visibility="collapsed")
         st.divider()
+        if st.button("🔄 Sincronizar Tudo", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Sincronização forçada! Dados atualizados.")
+            st.rerun()
         if st.button("🚪 Sair", use_container_width=True):
             del st.session_state["token"]; st.rerun()
 
     token = get_access_token()
     all_lists = get_todo_lists(token)
     inbox_list_id = next((l['id'] for l in all_lists if l['displayName'] == "Tasks" or l['wellknownListName'] == "defaultList"), None)
-    gtd_map = {l['displayName']: l['id'] for l in all_lists if l['displayName'] in GTD_CONTEXT_LISTS}
+    
+    # Mapeamento robusto (ignora maiúsculas/minúsculas e espaços extras)
+    gtd_map = {}
+    for l in all_lists:
+        d_name = l['displayName'].strip().lower()
+        for ctx_predefined in GTD_CONTEXT_LISTS:
+            if d_name == ctx_predefined.lower():
+                gtd_map[ctx_predefined] = l['id']
+                break
 
     if selection == "📊 Dashboard Completo":
         st.title("📊 Painel Executivo")
