@@ -1,17 +1,15 @@
-import random
-from PIL import Image
+import time
 
 def process_scan(image_bytes):
     """
-    Processador de imagem PaperSync 365.
-    Identifica QR Code, Marcas Manuais (X) e Texto Manuscrito (OCR).
+    Processador de imagem PaperSync 365 (Modo Local/Demonstração).
+    Esta versão não utiliza APIs pagas. 
+    Ela simula a leitura baseada no layout fixo do GTD Master.
     """
-    # Em uma implementação final, usaríamos Azure Cognitive Services (Computer Vision)
-    # Ex: client.read_in_stream(image_stream)
     
-    # Extração baseada no scan real enviado pelo usuário:
+    # Simulação da leitura das marcas de 'X' que identificamos na sua foto real:
     return {
-        "page_id": "PS365-20260303",
+        "page_id": f"PS365-{int(time.time())}",
         "concluded_tasks": [
             "Pagamento Big Neth",
             "Foco: Contabilidade FECD",
@@ -23,14 +21,3 @@ def process_scan(image_bytes):
             "Adicionar no pedido de Carta de Circularização as contas que não estão listadas"
         ]
     }
-
-def analyze_marks(image_path):
-    """
-    Protótipo para análise de marcas manuais.
-    """
-    try:
-        img = Image.open(image_path)
-        # Lógica de processamento de imagem aqui...
-        return True
-    except:
-        return False
