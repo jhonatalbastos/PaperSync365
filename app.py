@@ -165,7 +165,7 @@ def move_todo_task(token, source_list_id, task_id, target_list_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {"targetListId": target_list_id}
     r = requests.post(url, headers=headers, json=payload, timeout=20)
-    return r.status_code == 200
+    return r.status_code in [200, 201, 204]
 
 def create_planner_task_detailed(token, plan_id, bucket_id, title):
     url = f"{GRAPH_BASE}/planner/tasks"
@@ -334,19 +334,24 @@ def main():
                 with c_ctx:
                     target_ctx = st.selectbox("Mover p/ Contexto", ["-- Selecionar --"] + GTD_CONTEXT_LISTS, key=f"ctx_{source_type}_{item_id}")
                     if target_ctx != "-- Selecionar --":
-                        if st.button("Confirmar Contexto", key=f"btn_ctx_{source_type}_{item_id}"):
+                        if st.button("Confirmar Contexto", key=f"btn_ctx_{source_type}_{item_id}", type="primary"):
+                            st.toast(f"Movendo para {target_ctx}...")
                             target_id = gtd_map.get(target_ctx)
-                            if source_type == "todo" and target_id:
-                                if move_todo_task(token, source_id, item_id, target_id):
-                                    if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Ações")
-                                    st.success("Movido!"); st.cache_data.clear(); st.rerun()
-                            elif (source_type == "paper" or source_type == "email") and target_id:
-                                graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title})
-                                if source_type == "paper": mark_note_as_processed(item_title)
-                                if source_type == "email" and linked_msg_id: 
-                                    move_outlook_email(token, linked_msg_id, "@Ações")
-                                    delete_todo_task(token, source_id, item_id)
-                                st.success("Encaminhado!"); st.cache_data.clear(); st.rerun()
+                            if target_id:
+                                success = False
+                                if source_type in ["todo", "email"]:
+                                    if move_todo_task(token, source_id, item_id, target_id):
+                                        if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Ações")
+                                        success = True
+                                elif source_type == "paper":
+                                    graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title})
+                                    mark_note_as_processed(item_title)
+                                    success = True
+                                
+                                if success:
+                                    st.success("Item movido com sucesso!"); st.cache_data.clear(); st.rerun()
+                                else:
+                                    st.error("Erro ao mover item. Verifique sua conexão.")
 
                 with c_prj:
                     p_opts = ["-- Selecionar Projeto --", "🆕 + Criar Novo Projeto"] + [p['title'] for p in plans]
