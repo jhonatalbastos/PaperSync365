@@ -233,12 +233,37 @@ def main():
         pcol1, pcol2 = st.columns(2)
         with pcol1:
             if st.button("📄 Gerar e Salvar Snapshot", type="primary"):
-                page_id = f"PS365-{int(time.time())}"
-                # Dados para o PDF...
-                data_pdf = {"date": date.today().strftime("%d/%m/%Y"), "page_id": page_id}
-                save_page_snapshot(page_id, data_pdf)
-                pdf = generate_gtd_page(data_pdf)
-                st.download_button("⬇️ Baixar PDF", pdf, file_name=f"PaperSync_{page_id}.pdf")
+                with st.spinner("Coletando seus dados do Microsoft 365..."):
+                    # 1. Coletar Calendário
+                    events = graph_request("GET", "/me/calendarView", params={
+                        "startDateTime": datetime.now().isoformat(),
+                        "endDateTime": (datetime.now() + timedelta(days=1)).isoformat()
+                    }).get("value", [])
+                    
+                    # 2. Coletar Tarefas por Contexto
+                    context_tasks = {}
+                    for ctx_name in GTD_CONTEXT_LISTS:
+                        if ctx_name in gtd_map:
+                            tasks = get_tasks(gtd_map[ctx_name])
+                            active = [t['title'] for t in tasks if t['status'] != 'completed'][:5]
+                            if active: context_tasks[ctx_name] = active
+                    
+                    # 3. Coletar Delegação (do último plano selecionado se houver)
+                    delegations = []
+                    # (Lógica simplificada para o PDF inicial)
+
+                    data_pdf = {
+                        "date": date.today().strftime("%d/%m/%Y"),
+                        "page_id": f"PS365-{int(time.time())}",
+                        "calendar": [f"{e['start']['dateTime'][11:16]} - {e['subject']}" for e in events],
+                        "contexts": context_tasks,
+                        "delegations": delegations
+                    }
+                    
+                    save_page_snapshot(data_pdf["page_id"], data_pdf)
+                    pdf_bytes = generate_gtd_page(data_pdf)
+                    st.download_button("⬇️ Baixar PDF Preenchido", pdf_bytes, file_name=f"PaperSync_{data_pdf['page_id']}.pdf")
+                    st.success("PDF gerado com seus dados reais!")
         with pcol2:
             up = st.file_uploader("Upload do Scan")
             if up:
