@@ -239,22 +239,26 @@ def main():
         client_id, tenant_id, client_secret, redirect_uri = get_azure_config()
         
         if "token" not in st.session_state:
-            if st.button("🔌 Conectar Microsoft 365", type="primary"):
+            # Prepara os dados de PKCE e State antes do botão para que o link já esteja pronto
+            if "pkce_verifier" not in st.session_state:
                 verifier, challenge = pkce_create_pair()
-                state = secrets.token_urlsafe(16)
-                # Salvar state temporário (em produção usar DB ou Redis)
                 st.session_state["pkce_verifier"] = verifier
-                auth_params = {
-                    "client_id": client_id,
-                    "response_type": "code",
-                    "redirect_uri": redirect_uri,
-                    "scope": " ".join(SCOPES),
-                    "state": state,
-                    "code_challenge": challenge,
-                    "code_challenge_method": "S256"
-                }
-                auth_url = f"{AUTH_BASE}/{tenant_id}/oauth2/v2.0/authorize?{urlencode(auth_params)}"
-                st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
+                st.session_state["pkce_challenge"] = challenge
+                st.session_state["oauth_state"] = secrets.token_urlsafe(16)
+            
+            auth_params = {
+                "client_id": client_id,
+                "response_type": "code",
+                "redirect_uri": redirect_uri,
+                "scope": " ".join(SCOPES),
+                "state": st.session_state["oauth_state"],
+                "code_challenge": st.session_state["pkce_challenge"],
+                "code_challenge_method": "S256"
+            }
+            auth_url = f"{AUTH_BASE}/{tenant_id}/oauth2/v2.0/authorize?{urlencode(auth_params)}"
+            
+            st.link_button("🔌 Conectar Microsoft 365", auth_url, type="primary", use_container_width=True)
+            st.info("Clique no botão acima para autorizar o acesso à sua conta Microsoft.")
             st.stop()
         
         st.success("Conectado")
