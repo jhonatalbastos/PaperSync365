@@ -39,20 +39,34 @@ def generate_gtd_page(data):
     p = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
+    # --- Marca d'água (Fundo) ---
+    logo_path = os.path.join(os.path.dirname(__file__), "assets", "logo_fecd.png")
+    if os.path.exists(logo_path):
+        p.saveState()
+        p.setFillAlpha(0.05)  # Bem clarinho
+        # Centralizado e grande
+        p.drawInlineImage(logo_path, width/2 - 6*cm, height/2 - 4*cm, width=12*cm, height=8*cm, preserveAspectRatio=True)
+        p.restoreState()
+
     # --- QR Code ---
     qr = qrcode.QRCode(version=1, box_size=10, border=0)
     qr.add_data(data.get('page_id', '0000'))
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    p.drawInlineImage(img_qr, width - 3*cm, height - 3*cm, width=1.5*cm, height=1.5*cm)
+    p.drawInlineImage(img_qr, width - 2.5*cm, height - 2.5*cm, width=1.2*cm, height=1.2*cm)
 
-    # --- Cabeçalho Premium ---
-    p.setFont("Helvetica-Bold", 22)
+    # --- Cabeçalho com Logo ---
+    p.setFont("Helvetica-Bold", 24)
     p.setFillColor(colors.HexColor("#1e293b"))
-    p.drawString(1.5*cm, height - 2*cm, "PaperSync 365")
+    p.drawString(1.5*cm, height - 2*cm, "Tarefas do Dia")
+    
+    if os.path.exists(logo_path):
+        # Logo no canto superior direito (abaixo do QR ou ao lado)
+        p.drawInlineImage(logo_path, width - 7.5*cm, height - 2.5*cm, width=4.5*cm, height=1.5*cm, preserveAspectRatio=True)
+
     p.setFont("Helvetica", 11)
     p.setFillColor(colors.grey)
-    p.drawString(1.5*cm, height - 2.6*cm, f"PRODUTIVIDADE ANALÓGICA | {data.get('date', '')}")
+    p.drawString(1.5*cm, height - 2.6*cm, f"Data: {data.get('date', '')}")
     p.setStrokeColor(colors.HexColor("#e2e8f0"))
     p.line(1.5*cm, height - 3.2*cm, width - 1.5*cm, height - 3.2*cm)
 
