@@ -180,6 +180,45 @@ def delete_todo_task(token, list_id, task_id):
     r = requests.delete(url, headers=headers, timeout=20)
     return r.status_code == 204
 
+def get_outlook_folder_id(token, folder_name):
+    # Busca pasta por nome no Mailbox
+    url = f"{GRAPH_BASE}/me/mailFolders"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=20)
+    folders = r.json().get("value", [])
+    folder = next((f for f in folders if f['displayName'].lower() == folder_name.lower()), None)
+    return folder['id'] if folder else None
+
+def move_outlook_email(token, message_id, folder_name):
+    # Move e-mail para pasta específica
+    f_id = get_outlook_folder_id(token, folder_name)
+    if not f_id: return False
+    url = f"{GRAPH_BASE}/me/messages/{message_id}/move"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"destinationId": f_id}
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    return r.status_code == 201
+
+def create_planner_project(token, title):
+    # Cria Plano (Projeto) e retorna ID
+    # Para criar um plano precisamos de um Group ID. Vamos pegar o primeiro grupo do usuário.
+    g_url = f"{GRAPH_BASE}/me/memberOf"
+    headers = {"Authorization": f"Bearer {token}"}
+    grps = requests.get(g_url, headers=headers).json().get("value", [])
+    if not grps: return None
+    g_id = grps[0]['id']
+    
+    url = f"{GRAPH_BASE}/planner/plans"
+    payload = {"owner": g_id, "title": title}
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    if r.status_code != 201: return None
+    p_id = r.json()['id']
+    
+    # Criar Buckets Padrão
+    for b_name in ["Backlog", "Proxima Ação", "Delegado"]:
+        requests.post(f"{GRAPH_BASE}/planner/buckets", headers=headers, json={"name": b_name, "planId": p_id})
+    return p_id
+
 def complete_task(list_id, task_id):
     return graph_request("PATCH", f"/me/todo/lists/{list_id}/tasks/{task_id}", payload={"status": "completed"})
 
@@ -264,44 +303,87 @@ def main():
         plans = get_planner_plans(token)
         
         # Função auxiliar para renderizar o formulário de esclarecimento
-        def render_clarify_form(item_id, item_title, source_type, source_id=None):
+        def render_clarify_form(item_id, item_title, source_type, source_id=None, linked_msg_id=None):
             with st.container(border=True):
                 st.markdown(f"**{item_title}**")
-                c1, c2, c3 = st.columns([1, 1, 0.5])
+                c_ctx, c_prj, c_act = st.columns([1, 1, 0.6])
                 
-                with c1:
+                with c_ctx:
                     target_ctx = st.selectbox("Mover p/ Contexto", ["-- Selecionar --"] + GTD_CONTEXT_LISTS, key=f"ctx_{source_type}_{item_id}")
                     if target_ctx != "-- Selecionar --":
                         if st.button("Confirmar Contexto", key=f"btn_ctx_{source_type}_{item_id}"):
                             target_id = gtd_map.get(target_ctx)
                             if source_type == "todo" and target_id:
                                 if move_todo_task(token, source_id, item_id, target_id):
+                                    if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Ações")
                                     st.success("Movido!"); st.cache_data.clear(); st.rerun()
                             elif (source_type == "paper" or source_type == "email") and target_id:
-                                # Criar nova tarefa no To Do e remover origem
                                 graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title})
                                 if source_type == "paper": mark_note_as_processed(item_title)
+                                if source_type == "email" and linked_msg_id: 
+                                    move_outlook_email(token, linked_msg_id, "@Ações")
+                                    delete_todo_task(token, source_id, item_id)
                                 st.success("Encaminhado!"); st.cache_data.clear(); st.rerun()
 
-                with c2:
-                    if plans:
-                        p_opts = ["-- Selecionar Projeto --"] + [p['title'] for p in plans]
-                        target_proj = st.selectbox("Transformar em Projeto", p_opts, key=f"prj_{source_type}_{item_id}")
-                        if target_proj != "-- Selecionar Projeto --":
-                            p_sel = next(p for p in plans if p['title'] == target_proj)
-                            buckets = get_planner_buckets(token, p_sel['id'])
-                            b_opts = {b['name']: b['id'] for b in buckets}
-                            target_b = st.selectbox("Bucket", list(b_opts.keys()), key=f"bkt_{source_type}_{item_id}")
-                            if st.button("Criar no Planner", key=f"btn_prj_{source_type}_{item_id}"):
-                                if create_planner_task(token, p_sel['id'], b_opts[target_b], item_title):
-                                    if source_type == "todo": delete_todo_task(token, source_id, item_id)
-                                    if source_type == "paper": mark_note_as_processed(item_title)
-                                    st.success("Projeto Atualizado!"); st.cache_data.clear(); st.rerun()
+                with c_prj:
+                    p_opts = ["-- Selecionar Projeto --", "🆕 + Criar Novo Projeto"] + [p['title'] for p in plans]
+                    target_proj = st.selectbox("Assignar Proyecto", p_opts, key=f"prj_{source_type}_{item_id}")
+                    
+                    if target_proj == "🆕 + Criar Novo Projeto":
+                        new_p_name = st.text_input("Nome do Novo Projeto", key=f"newp_{source_type}_{item_id}")
+                        if st.button("Criar e Mover", key=f"btn_newp_{source_type}_{item_id}"):
+                            p_id = create_planner_project(token, new_p_name)
+                            if p_id:
+                                # Procura bucket 'Proxima Ação' no novo projeto
+                                bkts = get_planner_buckets(token, p_id)
+                                b_id = next((b['id'] for b in bkts if "proxima" in b['name'].lower()), bkts[0]['id'])
+                                create_planner_task(token, p_id, b_id, item_title)
+                                # Lógica de movimentação To Do / Email
+                                if source_type == "todo": delete_todo_task(token, source_id, item_id)
+                                if source_type == "paper": mark_note_as_processed(item_title)
+                                if source_type == "email" and linked_msg_id: 
+                                    move_outlook_email(token, linked_msg_id, "@Ações")
+                                    delete_todo_task(token, source_id, item_id)
+                                st.success("Projeto Criado!"); st.cache_data.clear(); st.rerun()
+                    
+                    elif target_proj != "-- Selecionar Projeto --":
+                        p_sel = next(p for p in plans if p['title'] == target_proj)
+                        buckets = get_planner_buckets(token, p_sel['id'])
+                        b_opts = {b['name']: b['id'] for b in buckets}
+                        target_b = st.selectbox("Bucket", list(b_opts.keys()), key=f"bkt_{source_type}_{item_id}")
+                        if st.button("Mover p/ Projeto", key=f"btn_prj_{source_type}_{item_id}"):
+                            if create_planner_task(token, p_sel['id'], b_opts[target_b], item_title):
+                                # Se for delegado, move e-mail para pasta específica
+                                folder = "@Aguardando Resposta" if "delegado" in target_b.lower() else "@Ações"
+                                if linked_msg_id: move_outlook_email(token, linked_msg_id, folder)
+                                
+                                # Move a tarefa no To Do para a lista 'Projetos' ou 'Aguardando resposta'
+                                target_list_name = "Aguardando resposta" if "delegado" in target_b.lower() else "Projetos"
+                                target_l_id = next((l['id'] for l in all_lists if l['displayName'].lower() == target_list_name.lower()), None)
+                                
+                                if source_type == "todo":
+                                    if target_l_id: move_todo_task(token, source_id, item_id, target_l_id)
+                                    else: delete_todo_task(token, source_id, item_id)
+                                elif source_type == "email":
+                                    if target_l_id: move_todo_task(token, source_id, item_id, target_l_id)
+                                    else: delete_todo_task(token, source_id, item_id)
+                                elif source_type == "paper": 
+                                    mark_note_as_processed(item_title)
+                                    if target_l_id: graph_request("POST", f"/me/todo/lists/{target_l_id}/tasks", payload={"title": item_title})
 
-                with c3:
+                                st.success("Projeto Atualizado!"); st.cache_data.clear(); st.rerun()
+
+                with c_act:
                     st.write("") # Espaçador
-                    if st.button("✓ Feito", key=f"done_{source_type}_{item_id}", use_container_width=True):
-                        if source_type == "todo": complete_task(source_id, item_id)
+                    col_done, col_trash = st.columns(2)
+                    if col_done.button("✓", key=f"done_{source_type}_{item_id}", help="Concluir"):
+                        if source_type == "todo" or source_type == "email": 
+                            complete_task(source_id, item_id)
+                            if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Concluídos")
+                        if source_type == "paper": mark_note_as_processed(item_title)
+                        st.cache_data.clear(); st.rerun()
+                    if col_trash.button("🗑️", key=f"trash_{source_type}_{item_id}", help="Descartar"):
+                        if source_type == "todo" or source_type == "email": delete_todo_task(token, source_id, item_id)
                         if source_type == "paper": mark_note_as_processed(item_title)
                         st.cache_data.clear(); st.rerun()
 
@@ -320,10 +402,21 @@ def main():
                 render_clarify_form(hashlib.md5(pn['text'].encode()).hexdigest(), pn['text'], "paper")
         
         with t_email:
-            emails = get_flagged_emails(token)
-            if not emails: st.info("Sem e-mails sinalizados.")
-            for eml in emails:
-                render_clarify_form(eml['id'], eml['subject'], "email")
+            # Lista 'flaggedEmails' do To Do
+            email_list_id = next((l['id'] for l in all_lists if l['wellknownListName'] == "flaggedEmails"), None)
+            if email_list_id:
+                email_tasks = get_tasks(token, email_list_id)
+                pending_emails = [t for t in email_tasks if t['status'] != 'completed']
+                if not pending_emails: st.info("Sem e-mails sinalizados pendentes.")
+                for et in pending_emails:
+                    # Tenta extrair ID da mensagem vinculada
+                    m_id = None
+                    if 'linkedResources' in et:
+                        for lr in et['linkedResources']:
+                            if 'externalId' in lr: m_id = lr['externalId']
+                    render_clarify_form(et['id'], et['title'], "email", email_list_id, m_id)
+            else:
+                st.warning("Lista de e-mails sinalizados não encontrada no To Do.")
 
     elif selection == "🤝 Projetos e Delegação":
         st.title("🤝 Gestão de Projetos e Delegação")
