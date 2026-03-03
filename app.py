@@ -167,12 +167,12 @@ def move_todo_task(token, source_list_id, task_id, target_list_id):
     r = requests.post(url, headers=headers, json=payload, timeout=20)
     return r.status_code == 200
 
-def create_planner_task(token, plan_id, bucket_id, title):
+def create_planner_task_detailed(token, plan_id, bucket_id, title):
     url = f"{GRAPH_BASE}/planner/tasks"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {"planId": plan_id, "bucketId": bucket_id, "title": title}
     r = requests.post(url, headers=headers, json=payload, timeout=20)
-    return r.status_code == 201
+    return r.json() if r.status_code == 201 else None
 
 def delete_todo_task(token, list_id, task_id):
     url = f"{GRAPH_BASE}/me/todo/lists/{list_id}/tasks/{task_id}"
@@ -181,23 +181,42 @@ def delete_todo_task(token, list_id, task_id):
     return r.status_code == 204
 
 def get_outlook_folder_id(token, folder_name):
-    # Busca pasta por nome no Mailbox
-    url = f"{GRAPH_BASE}/me/mailFolders"
+    # Busca profunda (recursiva) por pastas no Outlook
     headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(url, headers=headers, timeout=20)
-    folders = r.json().get("value", [])
-    folder = next((f for f in folders if f['displayName'].lower() == folder_name.lower()), None)
-    return folder['id'] if folder else None
+    
+    def search_folders(url):
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200: return None
+        data = r.json().get("value", [])
+        for f in data:
+            if f['displayName'].lower() == folder_name.lower():
+                return f['id']
+            if f.get('childFolderCount', 0) > 0:
+                child_url = f"{GRAPH_BASE}/me/mailFolders/{f['id']}/childFolders"
+                found = search_folders(child_url)
+                if found: return found
+        return None
+
+    return search_folders(f"{GRAPH_BASE}/me/mailFolders")
 
 def move_outlook_email(token, message_id, folder_name):
-    # Move e-mail para pasta específica
+    # Move e-mail para pasta específica (com busca profunda)
     f_id = get_outlook_folder_id(token, folder_name)
-    if not f_id: return False
+    if not f_id: 
+        print(f"DEBUG: Pasta {folder_name} não encontrada.")
+        return False
     url = f"{GRAPH_BASE}/me/messages/{message_id}/move"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {"destinationId": f_id}
     r = requests.post(url, headers=headers, json=payload, timeout=20)
     return r.status_code == 201
+
+def add_todo_link(token, list_id, task_id, web_url, label):
+    # Adiciona um link (LinkedResource) na tarefa do To Do
+    url = f"{GRAPH_BASE}/me/todo/lists/{list_id}/tasks/{task_id}/linkedResources"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"webUrl": web_url, "displayName": label}
+    requests.post(url, headers=headers, json=payload, timeout=10)
 
 def create_planner_project(token, title):
     # Cria Plano (Projeto) e retorna ID
@@ -352,24 +371,34 @@ def main():
                         b_opts = {b['name']: b['id'] for b in buckets}
                         target_b = st.selectbox("Bucket", list(b_opts.keys()), key=f"bkt_{source_type}_{item_id}")
                         if st.button("Mover p/ Projeto", key=f"btn_prj_{source_type}_{item_id}"):
-                            if create_planner_task(token, p_sel['id'], b_opts[target_b], item_title):
-                                # Se for delegado, move e-mail para pasta específica
+                            # 1. Cria tarefa no Planner
+                            p_task = create_planner_task_detailed(token, p_sel['id'], b_opts[target_b], item_title)
+                            if p_task:
+                                # 2. Determina Listas e Pastas
                                 folder = "@Aguardando Resposta" if "delegado" in target_b.lower() else "@Ações"
-                                if linked_msg_id: move_outlook_email(token, linked_msg_id, folder)
-                                
-                                # Move a tarefa no To Do para a lista 'Projetos' ou 'Aguardando resposta'
                                 target_list_name = "Aguardando resposta" if "delegado" in target_b.lower() else "Projetos"
                                 target_l_id = next((l['id'] for l in all_lists if l['displayName'].lower() == target_list_name.lower()), None)
                                 
-                                if source_type == "todo":
-                                    if target_l_id: move_todo_task(token, source_id, item_id, target_l_id)
+                                # 3. Se for e-mail, move no Outlook
+                                if linked_msg_id: move_outlook_email(token, linked_msg_id, folder)
+                                
+                                # 4. Gerencia a tarefa no To Do
+                                final_task_id = None
+                                if source_type == "todo" or source_type == "email":
+                                    if target_l_id: 
+                                        move_todo_task(token, source_id, item_id, target_l_id)
+                                        final_task_id = item_id
                                     else: delete_todo_task(token, source_id, item_id)
-                                elif source_type == "email":
-                                    if target_l_id: move_todo_task(token, source_id, item_id, target_l_id)
-                                    else: delete_todo_task(token, source_id, item_id)
-                                elif source_type == "paper": 
+                                elif source_type == "paper":
                                     mark_note_as_processed(item_title)
-                                    if target_l_id: graph_request("POST", f"/me/todo/lists/{target_l_id}/tasks", payload={"title": item_title})
+                                    if target_l_id:
+                                        res = graph_request("POST", f"/me/todo/lists/{target_l_id}/tasks", payload={"title": item_title})
+                                        final_task_id = res.get('id')
+
+                                # 5. Adiciona o LINK para o Planner (como no Atribuído a mim)
+                                if final_task_id and target_l_id:
+                                    planner_url = f"https://tasks.office.com/fecd.org.br/Home/Task/{p_task['id']}"
+                                    add_todo_link(token, target_l_id, final_task_id, planner_url, f"Ver no Planner: {p_sel['title']}")
 
                                 st.success("Projeto Atualizado!"); st.cache_data.clear(); st.rerun()
 
