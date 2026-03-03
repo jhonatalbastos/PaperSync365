@@ -123,7 +123,8 @@ def get_todo_lists(token):
 
 @st.cache_data(ttl=300)
 def get_tasks(token, list_id):
-    url = f"{GRAPH_BASE}/me/todo/lists/{list_id}/tasks"
+    # Expandimos linkedResources para pegar links de e-mail originais
+    url = f"{GRAPH_BASE}/me/todo/lists/{list_id}/tasks?$expand=linkedResources"
     headers = {"Authorization": f"Bearer {token}"}
     r = requests.get(url, headers=headers, timeout=20)
     return r.json().get("value", []) if r.status_code == 200 else []
@@ -377,8 +378,9 @@ def main():
             with st.container(border=True):
                 st.markdown(f"**{item_title}**")
                 if linked_msg_id:
-                    # Formato moderno de ID que evita travamento na tela "Carregando"
-                    email_url = f"https://outlook.office.com/mail/id/{linked_msg_id}"
+                    # Se recebermos um URL completo, usamos ele direto. 
+                    # Senão, usamos o novo formato de ID da Microsoft.
+                    email_url = linked_msg_id if linked_msg_id.startswith("http") else f"https://outlook.office.com/mail/id/{linked_msg_id}"
                     st.markdown(f"[📧 Abrir E-mail Original]({email_url})")
                 
                 c_ctx, c_prj, c_act = st.columns([1, 1, 0.6])
@@ -506,12 +508,13 @@ def main():
                 pending_emails = [t for t in email_tasks if t['status'] != 'completed']
                 if not pending_emails: st.info("Sem e-mails sinalizados pendentes.")
                 for et in pending_emails:
-                    # Tenta extrair ID da mensagem vinculada
-                    m_id = None
+                    # Tenta extrair o LINK DIRETO da mensagem (webUrl é o mais confiável)
+                    m_ref = None
                     if 'linkedResources' in et:
                         for lr in et['linkedResources']:
-                            if 'externalId' in lr: m_id = lr['externalId']
-                    render_clarify_form(et['id'], et['title'], "email", email_list_id, m_id)
+                            m_ref = lr.get('webUrl') or lr.get('externalId')
+                            if m_ref: break
+                    render_clarify_form(et['id'], et['title'], "email", email_list_id, m_ref)
             else:
                 st.warning("Lista de e-mails sinalizados não encontrada no To Do.")
 
