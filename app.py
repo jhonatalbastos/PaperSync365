@@ -115,8 +115,6 @@ SCOPES = [
     "Tasks.ReadWrite",
     "Calendars.Read",
     "Mail.Read",
-    "Group.Read.All",
-    "Tasks.ReadWrite.All",
 ]
 
 # =========================
