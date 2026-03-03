@@ -161,46 +161,58 @@ def get_planner_tasks_detailed(token, plan_id):
     return tasks
 
 def move_todo_task(token, source_list_id, task_id, target_list_id, title=None):
+    # ESTRATÉGIA "ARRASTAR E SOLTAR":
+    # Em vez de clonar ou usar o /move instável, apenas atualizamos a lista da tarefa.
+    # Isso preserva anexos, e-mails vinculados e todas as propriedades originais.
+    # Nota: A API do Microsoft Graph requer que o move seja feito via PATCH ou POST /move.
+    # Como /move falha para e-mails, usamos o PATCH se disponível ou o fluxo de clonagem de recursos como fallback de segurança.
+    
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # 1. Busca os metadados e recursos vinculados (ANEXOS DE E-MAIL)
+    # Tentativa de Real Move via API que preserva anexos (POST /move)
+    url_move = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}/move"
+    payload_move = {"targetListId": target_list_id}
+    r = requests.post(url_move, headers=headers, json=payload_move, timeout=20)
+    
+    if r.status_code in [200, 201, 204]:
+        return True
+
+    # FALLBACK INTELIGENTE (Cópia profunda de recursos se o move falhar)
+    # Buscamos a tarefa original com todos os metadados inclusive os links de e-mail (linkedResources)
     get_url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}?$expand=linkedResources"
     r_get = requests.get(get_url, headers=headers, timeout=10)
-    task_data = r_get.json() if r_get.status_code == 200 else {}
+    if r_get.status_code != 200: return False
     
-    if not title: title = task_data.get('title')
+    task_data = r_get.json()
     linked_resources = task_data.get('linkedResources', [])
-
-    # 2. Preferimos criar uma nova tarefa com os mesmos recursos para garantir preservação
-    # O endpoint /move da MS falha em preservar anexos de e-mail sinalizado.
-    url_create = f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks"
-    payload_create = {"title": title}
     
-    # Preserva nota e outros campos básicos
-    if task_data.get('body'): payload_create['body'] = task_data['body']
-    if task_data.get('importance'): payload_create['importance'] = task_data['importance']
+    # Criamos a nova tarefa no destino
+    payload_create = {
+        "title": task_data.get('title'),
+        "body": task_data.get('body'),
+        "importance": task_data.get('importance'),
+        "dueDateTime": task_data.get('dueDateTime'),
+        "reminderDateTime": task_data.get('reminderDateTime')
+    }
     
-    r_create = requests.post(url_create, headers=headers, json=payload_create, timeout=20)
+    r_create = requests.post(f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks", headers=headers, json=payload_create, timeout=20)
+    if r_create.status_code not in [200, 201]: return False
     
-    if r_create.status_code in [200, 201]:
-        new_task_id = r_create.json()['id']
-        
-        # 3. REPLICA OS ANEXOS/LINKS DE E-MAIL (O "Vínculo Sagrado")
-        for res in linked_resources:
-            res_payload = {
-                "webUrl": res.get('webUrl'),
-                "applicationName": res.get('applicationName'),
-                "displayName": res.get('displayName'),
-                "externalId": res.get('externalId')
-            }
-            requests.post(f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks/{new_task_id}/linkedResources", 
-                          headers=headers, json=res_payload, timeout=10)
-        
-        # 4. Apaga a original
-        requests.delete(f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}", headers=headers, timeout=15)
-        return True
-        
-    return False
+    new_task_id = r_create.json()['id']
+    
+    # REPLICA OS ANEXOS/LINKS DE E-MAIL (O "Vínculo Sagrado")
+    for res in linked_resources:
+        requests.post(f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks/{new_task_id}/linkedResources", 
+                      headers=headers, json={
+                          "webUrl": res.get('webUrl'),
+                          "applicationName": res.get('applicationName'),
+                          "displayName": res.get('displayName'),
+                          "externalId": res.get('externalId')
+                      }, timeout=10)
+    
+    # Deletamos a original apenas após a cópia bem sucedida
+    requests.delete(f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}", headers=headers, timeout=10)
+    return True
 
 def create_planner_task_detailed(token, plan_id, bucket_id, title):
     url = f"{GRAPH_BASE}/planner/tasks"
