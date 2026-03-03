@@ -184,7 +184,7 @@ def main():
     with st.sidebar:
         if os.path.exists(logo_path): st.image(logo_path, use_container_width=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        selection = st.radio("Menu de Navegação", ["📊 Dashboard Completo", "🧠 Central de Esclarecer", "🤝 Projetos e Delegação", "🖨️ Assistente de Impressão", "📤 Upload de Scan"], label_visibility="collapsed")
+        selection = st.radio("Menu de Navegação", ["📊 Dashboard Completo", "🧠 Central de Esclarecer", "🤝 Projetos e Delegação", "🖨️ Assistente de Impressão", "📤 Upload de Scan", "📖 Guia do Ecossistema"], label_visibility="collapsed")
         st.divider()
         if st.button("🔄 Sincronizar Tudo", use_container_width=True):
             st.cache_data.clear()
@@ -494,6 +494,49 @@ def main():
                     st.write(f"ID da Folha: {res['page_id']}")
                     for n in res['notes']: st.write(f"- {n}")
                     st.balloons()
+
+    elif selection == "📖 Guia do Ecossistema":
+        st.title("📖 Manual do Ecossistema GTD (FECD)")
+        st.markdown("""
+        Este é o guia de configuração para garantir que o Microsoft 365 e o seu fluxo analógico (Papel) funcionem em total harmonia.
+        
+        ---
+        ### 1. Microsoft To Do: Contextos de Execução
+        O To Do é onde vivem as **Próximas Ações** de um único passo. O aplicativo busca exatamente estes nomes:
+        - **Lista `Tasks` (ou Tarefas):** Sua **Inbox**. Todo scan processado cai aqui.
+        - **Listas de Contexto:**
+            - `Escritório`: Ações físicas na empresa.
+            - `Computador`: Exigem internet/softwares.
+            - `Telefone`: Ligações e WhatsApp rápido.
+            - `Na Rua`: Recados externos.
+            - `Assuntos a Tratar`: Pautas para reuniões e conversas.
+        
+        ---
+        ### 2. Microsoft Planner: Estratégia e Projetos
+        Cada **Plano** no Planner deve ser um **Projeto**. Organize-os em 3 colunas (Buckets):
+        - **Bucket `Backlog`:** Planejamento futuro (O App ignora no papel).
+        - **Bucket `Proxima Ação`:** Mova para cá o que deve ser feito **hoje**. Aparecerá na seção "💡 PROJETOS" do papel.
+        - **Bucket `Delegado` ou `Aguardando`:** Tarefas para terceiros. Aparecerá no "RADAR DE DELEGAÇÃO" do papel.
+        
+        ---
+        ### 3. Microsoft Outlook: Captura de E-mails
+        - **Sinalizar (Flag):** Se um e-mail exige ação > 2 min, coloque a bandeirinha.
+        - **Processamento:** Use a aba `🧠 Central de Esclarecer` no App para transformá-los em tarefas ou passos de projeto.
+        
+        ---
+        ### 4. Ciclo Sistêmico (App + Papel)
+        1. **Capturar:** Use a caixa `📥 CAPTURA RÁPIDA` no papel timbrado.
+        2. **Esclarecer:** Use o `📤 Upload de Scan` para extrair notas e processá-las.
+        3. **Organizar:** Mova tarefas para os buckets ou listas de contexto.
+        4. **Refletir:** Use o menu `🤝 Projetos e Delegação` para ver as barras de progresso.
+        5. **Executar:** Gere o PDF com o assistente, foque no que está no papel e risque com caneta.
+        
+        ---
+        ### ⚠️ Avisos Importantes:
+        - O app ignora a lista **Casa** para manter o foco profissional.
+        - Se criar uma lista nova, use o botão **🔄 Sincronizar Tudo** na lateral.
+        - O QR Code da página é único e serve para vincular suas notas manuscritas ao dia correto.
+        """)
 
 if __name__ == "__main__":
     q = st.query_params
