@@ -131,11 +131,19 @@ def pkce_create_pair():
 
 def get_azure_config():
     azure = st.secrets.get("azure", {})
+    redirect_uri = azure.get("REDIRECT_URI", "")
+    # Remove /callback se estiver presente para evitar erro de mismatch
+    if redirect_uri.endswith("/callback"):
+        redirect_uri = redirect_uri.replace("/callback", "")
+    # Garante que termine com / se for a URL base
+    if not redirect_uri.endswith("/"):
+        redirect_uri += "/"
+        
     return (
         azure.get("CLIENT_ID", ""),
         azure.get("TENANT_ID", "common"),
         azure.get("CLIENT_SECRET", ""),
-        azure.get("REDIRECT_URI", ""),
+        redirect_uri,
     )
 
 def exchange_code_for_token(code, redirect_uri, code_verifier, tenant_id, client_id, client_secret):
