@@ -1,0 +1,6 @@
+.streamlit/
+__pycache__/
+*.pyc
+oauth_state_store.json
+.vscore/
+.env
