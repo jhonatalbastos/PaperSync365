@@ -161,30 +161,24 @@ def get_planner_tasks_detailed(token, plan_id):
     return tasks
 
 def move_todo_task(token, source_list_id, task_id, target_list_id, title=None):
-    # Estratégia Ultra-Resiliente: Criar no destino e Apagar na origem
-    # Isso evita erros de permissão comuns no endpoint 'move' oficial da MS
+    # Restaura o endpoint oficial 'move' que preserva ANEXOS e METADADOS
+    url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}/move"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"targetListId": target_list_id}
     
-    # 1. Busca detalhes da tarefa original (se não tivermos o título)
-    if not title:
-        get_url = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}"
-        r_get = requests.get(get_url, headers=headers, timeout=10)
-        if r_get.status_code == 200:
-            title = r_get.json().get('title')
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
     
-    if not title: return False
-
-    # 2. Cria a nova tarefa na lista de destino
-    url_create = f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks"
-    payload_create = {"title": title}
-    r_create = requests.post(url_create, headers=headers, json=payload_create, timeout=20)
+    # Se o move oficial funcionar, excelente (preserva tudo)
+    if r.status_code in [200, 201, 204]: return True
     
-    if r_create.status_code in [200, 201]:
-        # 3. Se criou com sucesso, apaga a original da Inbox
-        url_del = f"{GRAPH_BASE}/me/todo/lists/{source_list_id}/tasks/{task_id}"
-        requests.delete(url_del, headers=headers, timeout=15)
-        return True
-        
+    # Plano C: Se falhar (ex: e-mail sinalizado não aceita move), cria nova e apaga anterior (aviso: perde anexos)
+    if title:
+        url_create = f"{GRAPH_BASE}/me/todo/lists/{target_list_id}/tasks"
+        r_c = requests.post(url_create, headers=headers, json={"title": title}, timeout=20)
+        if r_c.status_code in [200, 201]:
+            delete_todo_task(token, source_list_id, task_id)
+            return True
+            
     return False
 
 def create_planner_task_detailed(token, plan_id, bucket_id, title):
@@ -365,11 +359,17 @@ def main():
                                 st.error(f"❌ Erro: Lista '{target_ctx}' não encontrada no seu To Do. Crie-a ou tente sincronizar.")
                                 return
                                 
-                            st.toast(f"🔄 Movendo: {item_title}...")
+                            st.toast(f"🔄 Processando: {item_title}...")
+                            
+                            # 1. Se for e-mail, move o e-mail no Outlook PRIMEIRO
+                            # Fazemos isso antes para garantir que a mensagem ainda tenha o vínculo da flag ativo
+                            if linked_msg_id:
+                                move_outlook_email(token, linked_msg_id, "@Ações")
+                            
+                            # 2. Move a tarefa no To Do (usando o move que preserva anexos)
                             success = False
                             if source_type in ["todo", "email"]:
                                 if move_todo_task(token, source_id, item_id, target_id, title=item_title):
-                                    if linked_msg_id: move_outlook_email(token, linked_msg_id, "@Ações")
                                     success = True
                             elif source_type == "paper":
                                 if graph_request("POST", f"/me/todo/lists/{target_id}/tasks", payload={"title": item_title}):
@@ -377,9 +377,9 @@ def main():
                                     success = True
                             
                             if success:
-                                st.success("🚀 Item processador com sucesso!"); st.cache_data.clear(); st.rerun()
+                                st.success("🚀 Item movido com sucesso!"); st.cache_data.clear(); st.rerun()
                             else:
-                                st.error("⚠️ Falha na API da Microsoft. Tente novamente em alguns instantes.")
+                                st.error("⚠️ Falha ao mover. Verifique se o item ainda existe no Microsoft To Do.")
 
                 with c_prj:
                     p_opts = ["-- Selecionar Projeto --", "🆕 + Criar Novo Projeto"] + [p['title'] for p in plans]
@@ -408,22 +408,21 @@ def main():
                         b_opts = {b['name']: b['id'] for b in buckets}
                         target_b = st.selectbox("Bucket", list(b_opts.keys()), key=f"bkt_{source_type}_{item_id}")
                         if st.button("Mover p/ Projeto", key=f"btn_prj_{source_type}_{item_id}"):
-                            # 1. Cria tarefa no Planner
+                            folder = "@Aguardando Resposta" if "delegado" in target_b.lower() else "@Ações"
+                            
+                            # 1. Move e-mail no Outlook PRIMEIRO
+                            if linked_msg_id: move_outlook_email(token, linked_msg_id, folder)
+                            
+                            # 2. Cria tarefa no Planner
                             p_task = create_planner_task_detailed(token, p_sel['id'], b_opts[target_b], item_title)
                             if p_task:
-                                # 2. Determina Listas e Pastas
-                                folder = "@Aguardando Resposta" if "delegado" in target_b.lower() else "@Ações"
                                 target_list_name = "Aguardando resposta" if "delegado" in target_b.lower() else "Projetos"
                                 target_l_id = next((l['id'] for l in all_lists if l['displayName'].lower() == target_list_name.lower()), None)
                                 
-                                # 3. Se for e-mail, move no Outlook
-                                if linked_msg_id: move_outlook_email(token, linked_msg_id, folder)
-                                
-                                # 4. Gerencia a tarefa no To Do
                                 final_task_id = None
-                                if source_type == "todo" or source_type == "email":
+                                if source_type in ["todo", "email"]:
                                     if target_l_id: 
-                                        move_todo_task(token, source_id, item_id, target_l_id)
+                                        move_todo_task(token, source_id, item_id, target_l_id, title=item_title)
                                         final_task_id = item_id
                                     else: delete_todo_task(token, source_id, item_id)
                                 elif source_type == "paper":
@@ -432,7 +431,6 @@ def main():
                                         res = graph_request("POST", f"/me/todo/lists/{target_l_id}/tasks", payload={"title": item_title})
                                         final_task_id = res.get('id')
 
-                                # 5. Adiciona o LINK para o Planner (como no Atribuído a mim)
                                 if final_task_id and target_l_id:
                                     planner_url = f"https://tasks.office.com/fecd.org.br/Home/Task/{p_task['id']}"
                                     add_todo_link(token, target_l_id, final_task_id, planner_url, f"Ver no Planner: {p_sel['title']}")
