@@ -4,3 +4,5 @@ reportlab
 qrcode[pil]
 Pillow
 pandas
+opencv-python-headless
+pytesseract
