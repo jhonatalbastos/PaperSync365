@@ -33,42 +33,34 @@ def draw_wrapped_line(p, text, x, y, max_width, checkbox=True, is_overdue=False)
 
 def generate_gtd_page(data):
     """
-    Gera um PDF A4 otimizado para GTD.
+    Gera um PDF A4 otimizado para GTD (Layout FECD).
     """
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
-
-    # --- Marca d'água (Fundo) ---
     logo_path = os.path.join(os.path.dirname(__file__), "assets", "logo_fecd.png")
-    if os.path.exists(logo_path):
-        p.saveState()
-        p.setFillAlpha(0.05)  # Bem clarinho
-        # Centralizado e grande
-        p.drawInlineImage(logo_path, width/2 - 6*cm, height/2 - 4*cm, width=12*cm, height=8*cm, preserveAspectRatio=True)
-        p.restoreState()
 
-    # --- QR Code ---
+    # --- QR Code (Discreto no topo direito) ---
     qr = qrcode.QRCode(version=1, box_size=10, border=0)
     qr.add_data(data.get('page_id', '0000'))
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    p.drawInlineImage(img_qr, width - 2.5*cm, height - 2.5*cm, width=1.2*cm, height=1.2*cm)
+    p.drawInlineImage(img_qr, width - 2.2*cm, height - 2.2*cm, width=1*cm, height=1*cm)
 
-    # --- Cabeçalho com Logo ---
-    p.setFont("Helvetica-Bold", 24)
-    p.setFillColor(colors.HexColor("#1e293b"))
-    p.drawString(1.5*cm, height - 2*cm, "Tarefas do Dia")
+    # --- Cabeçalho com Logo FECD (Somente Cabeçalho) ---
+    p.setFont("Helvetica-Bold", 26)
+    p.setFillColor(colors.HexColor("#0f172a"))
+    p.drawString(1.5*cm, height - 1.8*cm, "Tarefas do Dia")
     
     if os.path.exists(logo_path):
-        # Logo no canto superior direito (abaixo do QR ou ao lado)
-        p.drawInlineImage(logo_path, width - 7.5*cm, height - 2.5*cm, width=4.5*cm, height=1.5*cm, preserveAspectRatio=True)
+        # Logo no Cabeçalho (Posicionada como no seu exemplo)
+        p.drawImage(logo_path, width - 8.5*cm, height - 2*cm, width=5.5*cm, height=1.3*cm, mask='auto', preserveAspectRatio=True)
 
     p.setFont("Helvetica", 11)
     p.setFillColor(colors.grey)
-    p.drawString(1.5*cm, height - 2.6*cm, f"Data: {data.get('date', '')}")
-    p.setStrokeColor(colors.HexColor("#e2e8f0"))
-    p.line(1.5*cm, height - 3.2*cm, width - 1.5*cm, height - 3.2*cm)
+    p.drawString(1.5*cm, height - 2.4*cm, f"FECD | {data.get('date', '')}")
+    p.setStrokeColor(colors.HexColor("#cbd5e1"))
+    p.line(1.5*cm, height - 3*cm, width - 1.5*cm, height - 3*cm)
 
     y = height - 4.5*cm
     max_w = width - 3*cm
