@@ -144,7 +144,7 @@ def get_azure_config():
         r_uri,
     )
 
-def exchange_code_for_token(code, redirect_uri, code_verifier, tenant_id, client_id, client_secret):
+def exchange_code_for_token(code, redirect_uri, tenant_id, client_id, client_secret):
     token_url = f"{AUTH_BASE}/{tenant_id}/oauth2/v2.0/token"
     data = {
         "client_id": client_id,
@@ -152,7 +152,6 @@ def exchange_code_for_token(code, redirect_uri, code_verifier, tenant_id, client
         "code": code,
         "redirect_uri": redirect_uri,
         "scope": " ".join(SCOPES),
-        "code_verifier": code_verifier,
     }
     if client_secret: 
         data["client_secret"] = client_secret
@@ -247,11 +246,8 @@ def main():
         client_id, tenant_id, client_secret, redirect_uri = get_azure_config()
         
         if "token" not in st.session_state:
-            # Prepara os dados de PKCE e State antes do botão para que o link já esteja pronto
-            if "pkce_verifier" not in st.session_state:
-                verifier, challenge = pkce_create_pair()
-                st.session_state["pkce_verifier"] = verifier
-                st.session_state["pkce_challenge"] = challenge
+            # Fluxo Simplificado (Standard Web App) para evitar erros de PKCE no Streamlit Cloud
+            if "oauth_state" not in st.session_state:
                 st.session_state["oauth_state"] = secrets.token_urlsafe(16)
             
             auth_params = {
@@ -260,20 +256,16 @@ def main():
                 "redirect_uri": redirect_uri,
                 "scope": " ".join(SCOPES),
                 "state": st.session_state["oauth_state"],
-                "code_challenge": st.session_state["pkce_challenge"],
-                "code_challenge_method": "S256",
                 "response_mode": "query",
                 "prompt": "select_account"
             }
-            # Garante que a URL não tenha aspas ou caracteres extras que confundam o redirecionamento
             auth_url = f"{AUTH_BASE}/{tenant_id}/oauth2/v2.0/authorize?{urlencode(auth_params)}"
             
             st.link_button("🔌 Conectar Microsoft 365", auth_url, type="primary", use_container_width=True)
-            if st.button("🔄 Limpar Cache de Login"):
-                for k in ["pkce_verifier", "pkce_challenge", "oauth_state", "token"]:
-                    if k in st.session_state: del st.session_state[k]
+            if st.button("🔄 Reiniciar Sessão"):
+                st.session_state.clear()
                 st.rerun()
-            st.info("Clique no botão acima para autorizar o acesso.")
+            st.info("Clique acima para autorizar.")
             st.stop()
         
         st.success("Conectado")
@@ -403,7 +395,6 @@ if __name__ == "__main__":
             tok = exchange_code_for_token(
                 code=q["code"],
                 redirect_uri=redirect_uri,
-                code_verifier=st.session_state.get("pkce_verifier"),
                 tenant_id=tenant_id,
                 client_id=client_id,
                 client_secret=client_secret
