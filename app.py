@@ -79,7 +79,7 @@ st.markdown(f"""
 # --- MICROSOFT API CORE (MANTIDO 100%) ---
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 AUTH_BASE = "https://login.microsoftonline.com"
-GTD_CONTEXT_LISTS = ["Escritório", "Computador", "Telefone", "Na Rua", "Casa", "Assuntos a Tratar"]
+GTD_CONTEXT_LISTS = ["Escritório", "Computador", "Telefone", "Na Rua", "Assuntos a Tratar"]
 SCOPES = ["User.Read", "offline_access", "Tasks.ReadWrite", "Calendars.Read", "Mail.Read"]
 
 def get_azure_config():
@@ -245,7 +245,28 @@ def main():
                     for ctx_n, ctx_id in gtd_map.items():
                         ts = get_tasks(ctx_id)
                         tasks_raw[ctx_n] = [{"title": t['title'], "selected": True} for t in ts if t['status'] != 'completed']
-                    st.session_state.sync_data = {"calendar": [{"subject": e['subject'], "time": e['start']['dateTime'][11:16], "selected": True} for e in evs], "tasks": tasks_raw}
+
+                    # Buscar Planner (Delegadas)
+                    plans = get_planner_plans()
+                    planner_raw = []
+                    if plans:
+                        for p in plans:
+                            pts = get_planner_tasks_detailed(p['id'])
+                            for pt in pts:
+                                if pt.get('percentComplete', 0) < 100:
+                                    planner_raw.append({
+                                        "title": pt['title'],
+                                        "plan": p['title'],
+                                        "bucket": pt.get('bucketName', 'Geral'),
+                                        "selected": True,
+                                        "id": pt['id']
+                                    })
+
+                    st.session_state.sync_data = {
+                        "calendar": [{"subject": e['subject'], "time": e['start']['dateTime'][11:16], "selected": True} for e in evs],
+                        "tasks": tasks_raw,
+                        "planner": planner_raw
+                    }
                     st.session_state.wizard_step = 2; st.rerun()
 
         elif st.session_state.wizard_step == 2:
@@ -264,11 +285,34 @@ def main():
                         st.markdown(f"**{ctx_name}**")
                         for j, tk_item in enumerate(tlist):
                             tk_item['selected'] = st.checkbox(tk_item['title'], value=tk_item['selected'], key=f"f_tk_{ctx_name}_{j}")
-                
+
+                st.markdown("#### 🤝 Radar de Delegação (Planner)")
+                if sd.get('planner'):
+                    for k, pk in enumerate(sd['planner']):
+                        pk['selected'] = st.checkbox(f"{pk['title']} ({pk['plan']})", value=pk['selected'], key=f"f_pk_{k}")
+                else:
+                    st.write("Nenhuma tarefa delegada ativa.")
+
                 if st.form_submit_button("🚀 Confirmar e Gerar PDF"):
                     final_cal = [e for e in sd['calendar'] if e['selected']]
                     final_tasks = {c: [t for t in tl if t['selected']] for c, tl in sd['tasks'].items()}
-                    st.session_state.final_gtd_data = {"date": date.today().strftime("%d/%m/%Y"), "page_id": f"FECD-{int(time.time())}", "calendar": final_cal, "tasks": final_tasks, "waiting": []}
+                    final_waiting = []
+                    if sd.get('planner'):
+                        for pk in sd['planner']:
+                            if pk['selected']:
+                                final_waiting.append({
+                                    "task": pk['title'],
+                                    "plan": pk['plan'],
+                                    "bucket": pk['bucket']
+                                })
+                    
+                    st.session_state.final_gtd_data = {
+                        "date": date.today().strftime("%d/%m/%Y"),
+                        "page_id": f"FECD-{int(time.time())}",
+                        "calendar": final_cal,
+                        "tasks": final_tasks,
+                        "waiting": final_waiting
+                    }
                     st.session_state.wizard_step = 3; st.rerun()
             if st.button("⬅️ Cancelar"): st.session_state.wizard_step = 1; st.rerun()
 
@@ -278,10 +322,30 @@ def main():
             save_page_snapshot(fdata["page_id"], fdata)
             pdf_buf = generate_gtd_page(fdata)
             pdf_val = pdf_buf.getvalue()
-            b64_pdf = base64.b64encode(pdf_val).decode('utf-8')
+            # JS para forçar abertura em nova aba (contornando bloqueios de data-uri)
+            import base64 as b64_lib
+            b64_pdf = b64_lib.b64encode(pdf_val).decode('utf-8')
             
-            st.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" target="_blank" style="text-decoration: none;"><div style="background-color: #2563eb; color: white; padding: 18px; border-radius: 12px; text-align: center; font-weight: 800; cursor: pointer; margin-bottom: 12px;">📄 ABRIR PDF FECD PARA IMPRIMIR</div></a>', unsafe_allow_html=True)
-            st.download_button("⬇️ Baixar Cópia Adicional", pdf_val, file_name=f"Tarefas_FECD_{fdata['page_id']}.pdf")
+            st.markdown(f"""
+                <script>
+                function openPdf() {{
+                    var byteCharacters = atob("{b64_pdf}");
+                    var byteNumbers = new Array(byteCharacters.length);
+                    for (var i = 0; i < byteCharacters.length; i++) {{
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }}
+                    var byteArray = new Uint8Array(byteNumbers);
+                    var file = new Blob([byteArray], {{type: 'application/pdf;base64'}});
+                    var fileURL = URL.createObjectURL(file);
+                    window.open(fileURL);
+                }}
+                </script>
+                <div style="background-color: #2563eb; color: white; padding: 18px; border-radius: 12px; text-align: center; font-weight: 800; cursor: pointer; margin-bottom: 12px;" onclick="openPdf()">
+                    📄 ABRIR PDF FECD PARA IMPRIMIR
+                </div>
+            """, unsafe_allow_html=True)
+            
+            st.download_button("⬇️ Salvar PDF (Link Direto)", pdf_val, file_name=f"Tarefas_FECD_{fdata['page_id']}.pdf", use_container_width=True)
             if st.button("♻️ Iniciar Novo Ciclo"): st.session_state.wizard_step = 1; st.rerun()
 
     elif selection == "📤 Upload de Scan":

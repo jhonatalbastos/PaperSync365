@@ -29,8 +29,8 @@ def draw_wrapped_line(p, text, x, y, max_width, checkbox=True, is_overdue=False)
         else:
             p.drawString(x + (0.7*cm if checkbox else 0.3*cm), current_y, line)
         
-        current_y -= 0.45*cm
-        if current_y < 1.0*cm: break
+        current_y -= 0.38*cm
+        if current_y < 0.8*cm: break
     return current_y
 
 def generate_gtd_page(data):
@@ -42,78 +42,79 @@ def generate_gtd_page(data):
     p = canvas.Canvas(temp_buffer, pagesize=A4)
     width, height = A4
 
-    # --- QR Code (No topo direito, ajustado ao timbrado) ---
+    # --- QR Code (No topo ESQUERDO para evitar conflito com logo FECD) ---
     qr = qrcode.QRCode(version=1, box_size=10, border=0)
     qr.add_data(data.get('page_id', '0000'))
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    p.drawInlineImage(img_qr, width - 2.5*cm, height - 2.2*cm, width=1*cm, height=1*cm)
+    p.drawInlineImage(img_qr, 1.5*cm, height - 2.2*cm, width=1*cm, height=1*cm)
 
     # --- Informações Dinâmicas (Data e Título) ---
-    p.setFont("Helvetica-Bold", 24)
+    p.setFont("Helvetica-Bold", 22)
     p.setFillColor(colors.HexColor("#0f172a"))
     p.drawString(1.5*cm, height - 3.5*cm, "Tarefas do Dia")
     
-    p.setFont("Helvetica", 11)
+    p.setFont("Helvetica", 10)
     p.setFillColor(colors.grey)
     p.drawString(1.5*cm, height - 4.1*cm, f"Sincronizado em: {data.get('date', '')}")
     p.setStrokeColor(colors.HexColor("#cbd5e1"))
     p.line(1.5*cm, height - 4.5*cm, width - 1.5*cm, height - 4.5*cm)
 
-    y = height - 5.5*cm
+    y = height - 5.2*cm
     max_w = width - 3.5*cm
 
     # --- 1. Calendário (Sem Checkbox) ---
-    p.setFont("Helvetica-Bold", 13)
+    p.setFont("Helvetica-Bold", 11.5)
     p.setFillColor(colors.HexColor("#2563eb"))
     p.drawString(1.5*cm, y, "PAISAGEM RÍGIDA (Eventos do Dia)")
-    y -= 0.6*cm
-    p.setFont("Helvetica", 10)
+    y -= 0.5*cm
+    p.setFont("Helvetica", 9)
     p.setFillColor(colors.black)
     
     for event in data.get('calendar', []):
         text = f"{event.get('time', '')} - {event.get('subject', '')}"
         y = draw_wrapped_line(p, text, 2*cm, y, max_w, checkbox=False)
-        y -= 0.2*cm
-        if y < 18*cm: break
+        y -= 0.15*cm
+        if y < 1.0*cm: break
 
-    y -= 0.8*cm
+    y -= 0.5*cm
 
     # --- 2. Próximas Ações (Priorizadas) ---
-    p.setFont("Helvetica-Bold", 13)
+    p.setFont("Helvetica-Bold", 11.5)
     p.setFillColor(colors.HexColor("#2563eb"))
     p.drawString(1.5*cm, y, "PRÓXIMAS AÇÕES (To Do)")
-    y -= 0.7*cm
+    y -= 0.6*cm
     
     tasks_by_ctx = data.get('tasks', {})
     for ctx, task_list in tasks_by_ctx.items():
         if not task_list: continue
-        p.setFont("Helvetica-BoldOblique", 11)
+        p.setFont("Helvetica-BoldOblique", 10)
         p.setFillColor(colors.HexColor("#64748b"))
         p.drawString(1.8*cm, y, ctx.upper())
-        y -= 0.5*cm
-        p.setFont("Helvetica", 10)
+        y -= 0.4*cm
+        p.setFont("Helvetica", 9)
         p.setFillColor(colors.black)
         for t in task_list:
             is_over = t.get('overdue', False) if isinstance(t, dict) else False
             title = t.get('title') if isinstance(t, dict) else t
             y = draw_wrapped_line(p, title, 2.2*cm, y, max_w, checkbox=True, is_overdue=is_over)
-            y -= 0.1*cm
-            if y < 10*cm: break
-        y -= 0.4*cm
+            y -= 0.05*cm
+            if y < 1.0*cm: break
+        y -= 0.3*cm
 
     # --- 3. Delegação (Com Plan/Bucket) ---
-    if y > 8*cm:
-        p.setFont("Helvetica-Bold", 13)
+    if y > 5*cm:
+        p.setFont("Helvetica-Bold", 11.5)
         p.setFillColor(colors.HexColor("#2563eb"))
-        p.drawString(1.5*cm, y, "RADAR DE DELEGAÇÃO (Aguardando Resposta)")
-        y -= 0.6*cm
-        p.setFont("Helvetica", 10)
+        p.drawString(1.5*cm, y, "RADAR DE DELEGAÇÃO (Planner)")
+        y -= 0.5*cm
+        p.setFont("Helvetica", 9)
         for item in data.get('waiting', []):
             loc = f"[{item.get('plan', '')} > {item.get('bucket', '')}]"
             text = f"{item.get('task', '')} {loc}"
             y = draw_wrapped_line(p, text, 2*cm, y, max_w, checkbox=True)
-            y -= 0.2*cm
+            y -= 0.15*cm
+            if y < 1.0*cm: break
 
     # --- 4. Captura Rápida Ampla com Linhas ---
     inbox_y_start = 1.5*cm
