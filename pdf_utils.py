@@ -7,6 +7,8 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.lib.utils import simpleSplit
 
+from pypdf import PdfReader, PdfWriter
+
 def draw_wrapped_line(p, text, x, y, max_width, checkbox=True, is_overdue=False):
     """Auxiliar para desenhar texto com quebra de linha e marcas de status."""
     limit_width = max_width - (1.5*cm if checkbox else 0.5*cm)
@@ -28,42 +30,38 @@ def draw_wrapped_line(p, text, x, y, max_width, checkbox=True, is_overdue=False)
             p.drawString(x + (0.7*cm if checkbox else 0.3*cm), current_y, line)
         
         current_y -= 0.45*cm
-        if current_y < 1.5*cm: break
+        if current_y < 1.0*cm: break
     return current_y
 
 def generate_gtd_page(data):
     """
-    Gera um PDF A4 otimizado para GTD (Layout FECD).
+    Gera um PDF A4 usando o Papel Timbrado oficial como base e sobrepondo dados GTD.
     """
-    buffer = BytesIO()
-    p = canvas.Canvas(buffer, pagesize=A4)
+    # 1. Gerar o conteúdo dinâmico (Tarefas, QR, Data) em um buffer temporário
+    temp_buffer = BytesIO()
+    p = canvas.Canvas(temp_buffer, pagesize=A4)
     width, height = A4
-    logo_path = os.path.join(os.path.dirname(__file__), "assets", "logo_fecd.png")
 
-    # --- QR Code (Discreto no topo direito) ---
+    # --- QR Code (No topo direito, ajustado ao timbrado) ---
     qr = qrcode.QRCode(version=1, box_size=10, border=0)
     qr.add_data(data.get('page_id', '0000'))
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-    p.drawInlineImage(img_qr, width - 2.2*cm, height - 2.2*cm, width=1*cm, height=1*cm)
+    p.drawInlineImage(img_qr, width - 2.5*cm, height - 2.2*cm, width=1*cm, height=1*cm)
 
-    # --- Cabeçalho com Logo FECD (Somente Cabeçalho) ---
-    p.setFont("Helvetica-Bold", 26)
+    # --- Informações Dinâmicas (Data e Título) ---
+    p.setFont("Helvetica-Bold", 24)
     p.setFillColor(colors.HexColor("#0f172a"))
-    p.drawString(1.5*cm, height - 1.8*cm, "Tarefas do Dia")
+    p.drawString(1.5*cm, height - 3.5*cm, "Tarefas do Dia")
     
-    if os.path.exists(logo_path):
-        # Logo no Cabeçalho (Posicionada como no seu exemplo)
-        p.drawImage(logo_path, width - 8.5*cm, height - 2*cm, width=5.5*cm, height=1.3*cm, mask='auto', preserveAspectRatio=True)
-
     p.setFont("Helvetica", 11)
     p.setFillColor(colors.grey)
-    p.drawString(1.5*cm, height - 2.4*cm, f"FECD | {data.get('date', '')}")
+    p.drawString(1.5*cm, height - 4.1*cm, f"Sincronizado em: {data.get('date', '')}")
     p.setStrokeColor(colors.HexColor("#cbd5e1"))
-    p.line(1.5*cm, height - 3*cm, width - 1.5*cm, height - 3*cm)
+    p.line(1.5*cm, height - 4.5*cm, width - 1.5*cm, height - 4.5*cm)
 
-    y = height - 4.5*cm
-    max_w = width - 3*cm
+    y = height - 5.5*cm
+    max_w = width - 3.5*cm
 
     # --- 1. Calendário (Sem Checkbox) ---
     p.setFont("Helvetica-Bold", 13)
@@ -138,5 +136,27 @@ def generate_gtd_page(data):
 
     p.showPage()
     p.save()
-    buffer.seek(0)
-    return buffer
+    temp_buffer.seek(0)
+
+    # 2. Mesclar com o papel timbrado oficial (Background)
+    template_path = os.path.join(os.path.dirname(__file__), "assets", "template_fecd.pdf")
+    if os.path.exists(template_path):
+        try:
+            overlay_pdf = PdfReader(temp_buffer)
+            template_pdf = PdfReader(template_path)
+            
+            output = PdfWriter()
+            page = template_pdf.pages[0]
+            # O conteúdo GTD (overlay) é fundido sobre o papel timbrado
+            page.merge_page(overlay_pdf.pages[0])
+            output.add_page(page)
+            
+            final_buffer = BytesIO()
+            output.write(final_buffer)
+            final_buffer.seek(0)
+            return final_buffer
+        except Exception as e:
+            # Fallback caso ocorra erro na mesclagem (ex: pypdf não instalado ou PDF corrompido)
+            return temp_buffer
+    
+    return temp_buffer

@@ -6,3 +6,4 @@ Pillow
 pandas
 opencv-python-headless
 pytesseract
+pypdf
