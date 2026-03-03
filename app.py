@@ -52,7 +52,7 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 AUTH_BASE = "https://login.microsoftonline.com"
 GTD_CONTEXT_LISTS = ["Escritório", "Computador", "Telefone", "Na Rua", "Casa", "Assuntos a Tratar"]
 GTD_CONTROL_LISTS = ["Aguardando resposta", "Projetos", "Algum dia/Talvez"]
-SCOPES = ["User.Read", "offline_access", "Tasks.ReadWrite", "Calendars.Read", "Mail.Read", "Tasks.ReadWrite.All"]
+SCOPES = ["User.Read", "offline_access", "Tasks.ReadWrite", "Calendars.Read", "Mail.Read"]
 
 # =========================
 # INTEGRAÇÃO MICROSOFT
