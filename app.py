@@ -114,18 +114,54 @@ def graph_request(method, path, params=None, payload=None):
     r = requests.request(method, url, headers=headers, params=params, data=json.dumps(payload) if payload else None, timeout=30)
     return r.json() if r.text else {}
 
-def get_todo_lists(): return graph_request("GET", "/me/todo/lists").get("value", [])
-def get_tasks(list_id): return graph_request("GET", f"/me/todo/lists/{list_id}/tasks").get("value", [])
-def get_flagged_emails(): return graph_request("GET", "/me/messages", params={"$filter": "flag/flagStatus eq 'flagged'", "$top": "30"}).get("value", [])
-def get_planner_plans(): return graph_request("GET", "/me/planner/plans").get("value", [])
-def get_planner_buckets(plan_id): return graph_request("GET", f"/planner/plans/{plan_id}/buckets").get("value", [])
-def get_planner_tasks_detailed(plan_id):
-    tasks = graph_request("GET", f"/planner/plans/{plan_id}/tasks").get("value", [])
-    buckets = get_planner_buckets(plan_id)
+@st.cache_data(ttl=600)
+def get_todo_lists(token):
+    url = f"{GRAPH_BASE}/me/todo/lists"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=20)
+    return r.json().get("value", []) if r.status_code == 200 else []
+
+@st.cache_data(ttl=300)
+def get_tasks(token, list_id):
+    url = f"{GRAPH_BASE}/me/todo/lists/{list_id}/tasks"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=20)
+    return r.json().get("value", []) if r.status_code == 200 else []
+
+@st.cache_data(ttl=300)
+def get_flagged_emails(token):
+    url = f"{GRAPH_BASE}/me/messages"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"$filter": "flag/flagStatus eq 'flagged'", "$top": "30"}
+    r = requests.get(url, headers=headers, params=params, timeout=20)
+    return r.json().get("value", []) if r.status_code == 200 else []
+
+@st.cache_data(ttl=3600)
+def get_planner_plans(token):
+    url = f"{GRAPH_BASE}/me/planner/plans"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=20)
+    return r.json().get("value", []) if r.status_code == 200 else []
+
+def get_planner_buckets(token, plan_id):
+    url = f"{GRAPH_BASE}/planner/plans/{plan_id}/buckets"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=20)
+    return r.json().get("value", []) if r.status_code == 200 else []
+
+@st.cache_data(ttl=600)
+def get_planner_tasks_detailed(token, plan_id):
+    url = f"{GRAPH_BASE}/planner/plans/{plan_id}/tasks"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=20)
+    tasks = r.json().get("value", []) if r.status_code == 200 else []
+    buckets = get_planner_buckets(token, plan_id)
     b_map = {b['id']: b['name'] for b in buckets}
     for t in tasks: t['bucketName'] = b_map.get(t.get('bucketId'), 'Desconhecido')
     return tasks
-def complete_task(list_id, task_id): return graph_request("PATCH", f"/me/todo/lists/{list_id}/tasks/{task_id}", payload={"status": "completed"})
+
+def complete_task(list_id, task_id):
+    return graph_request("PATCH", f"/me/todo/lists/{list_id}/tasks/{task_id}", payload={"status": "completed"})
 
 # --- VIEW MAIN ---
 def main():
@@ -153,7 +189,8 @@ def main():
         if st.button("🚪 Sair", use_container_width=True):
             del st.session_state["token"]; st.rerun()
 
-    all_lists = get_todo_lists()
+    token = get_access_token()
+    all_lists = get_todo_lists(token)
     inbox_list_id = next((l['id'] for l in all_lists if l['displayName'] == "Tasks" or l['wellknownListName'] == "defaultList"), None)
     gtd_map = {l['displayName']: l['id'] for l in all_lists if l['displayName'] in GTD_CONTEXT_LISTS}
 
@@ -175,13 +212,16 @@ def main():
             st.subheader("⚡ Ações por Contexto")
             ctx = st.selectbox("Selecione a Lista de Contexto", GTD_CONTEXT_LISTS)
             if ctx in gtd_map:
-                tasks = get_tasks(gtd_map[ctx])
+                tasks = get_tasks(token, gtd_map[ctx])
                 active = [t for t in tasks if t['status'] != 'completed']
                 if not active: st.success("🎉 Tudo limpo por aqui!")
                 for t in active:
                     t_col, b_col = st.columns([0.85, 0.15])
                     t_col.write(t['title'])
-                    if b_col.button("✓", key=f"dash_comp_{t['id']}"): complete_task(gtd_map[ctx], t['id']); st.rerun()
+                    if b_col.button("✓", key=f"dash_comp_{t['id']}"):
+                        complete_task(gtd_map[ctx], t['id'])
+                        st.cache_data.clear() # Limpa cache para refletir a conclusão
+                        st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
     elif selection == "🧠 Central de Esclarecer":
@@ -191,14 +231,20 @@ def main():
         t_inbox, t_paper, t_email = st.tabs(["📥 Inbox To Do", "📝 Notas de Papel", "📧 E-mails com Flag"])
         
         with t_inbox:
+            # inbox_list_id is needed here
+            all_lists = get_todo_lists(token)
+            inbox_list_id = next((l['id'] for l in all_lists if l['displayName'] == "Tasks" or l['wellknownListName'] == "defaultList"), None)
             if inbox_list_id:
-                inbox_tasks = get_tasks(inbox_list_id)
+                inbox_tasks = get_tasks(token, inbox_list_id)
                 for it in inbox_tasks:
                     if it['status'] != 'completed':
                         with st.container(border=True):
                             st.write(it['title'])
                             b1, b2, b3 = st.columns(3)
-                            if b1.button("✓ Feito", key=f"inb_{it['id']}"): complete_task(inbox_list_id, it['id']); st.rerun()
+                            if b1.button("✓ Feito", key=f"inb_{it['id']}"): 
+                                complete_task(inbox_list_id, it['id'])
+                                st.cache_data.clear() # Limpa cache para refletir a conclusão
+                                st.rerun()
                             b2.button("📅 Agendar", key=f"inba_{it['id']}")
                             b3.button("🤝 Delegar", key=f"inbd_{it['id']}")
         
@@ -211,7 +257,7 @@ def main():
                     if st.button("✓ Processado", key=f"pnb_{pn['text']}"): mark_note_as_processed(pn['text']); st.rerun()
         
         with t_email:
-            emails = get_flagged_emails()
+            emails = get_flagged_emails(token)
             for eml in emails:
                 with st.container(border=True):
                     st.markdown(f"**{eml['subject']}**")
@@ -220,12 +266,12 @@ def main():
 
     elif selection == "🤝 Radar de Delegação":
         st.title("🤝 Radar de Delegação (Planner)")
-        plans = get_planner_plans()
+        plans = get_planner_plans(token)
         if not plans: st.warning("Nenhum plano encontrado no Planner.")
         else:
             p_name = st.selectbox("Escolha o Plano do Projeto", [p['title'] for p in plans])
             p_id = next(p['id'] for p in plans if p['title'] == p_name)
-            p_tasks = get_planner_tasks_detailed(p_id)
+            p_tasks = get_planner_tasks_detailed(token, p_id)
             for pt in p_tasks:
                 if pt.get('percentComplete', 0) < 100:
                     badge = "pill-urgent" if pt.get('dueDateTime') and datetime.fromisoformat(pt['dueDateTime'][:19]) < datetime.now() else "pill-normal"
@@ -243,15 +289,15 @@ def main():
                     evs = graph_request("GET", "/me/calendarView", params={"startDateTime": datetime.now().isoformat(), "endDateTime": (datetime.now() + timedelta(days=1)).isoformat()}).get("value", [])
                     tasks_raw = {}
                     for ctx_n, ctx_id in gtd_map.items():
-                        ts = get_tasks(ctx_id)
+                        ts = get_tasks(token, ctx_id)
                         tasks_raw[ctx_n] = [{"title": t['title'], "selected": True} for t in ts if t['status'] != 'completed']
 
                     # Buscar Planner (Delegadas)
-                    plans = get_planner_plans()
+                    plans = get_planner_plans(token)
                     planner_raw = []
                     if plans:
                         for p in plans:
-                            pts = get_planner_tasks_detailed(p['id'])
+                            pts = get_planner_tasks_detailed(token, p['id'])
                             for pt in pts:
                                 if pt.get('percentComplete', 0) < 100:
                                     planner_raw.append({
